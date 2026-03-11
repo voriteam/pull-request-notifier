@@ -1,0 +1,29 @@
+display_information:
+  name: PR Notifier
+  description: GitHub pull request notifications as Slack DMs
+  background_color: "#24292f"
+
+features:
+  bot_user:
+    display_name: PR Notifier
+    always_online: true
+  slash_commands:
+    - command: /link-github
+      url: https://YOUR_DOMAIN/slack/commands
+      description: Link your GitHub account to receive PR notifications
+      should_escape: false
+
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - commands
+      - im:write
+
+settings:
+  interactivity:
+    is_enabled: true
+    request_url: https://YOUR_DOMAIN/slack/interactions
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

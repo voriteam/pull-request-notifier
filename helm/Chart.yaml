@@ -1,0 +1,6 @@
+apiVersion: v2
+name: pull-request-notifier
+description: GitHub PR activity → Slack DM notification service
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

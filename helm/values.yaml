@@ -1,0 +1,47 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/voriteam/pull-request-notifier
+  tag: latest
+  pullPolicy: IfNotPresent
+
+config:
+  baseURL: ""
+  port: "8080"
+  dbPath: "/data/pr-notifier.db"
+
+# Provide credentials inline (for dev/testing).
+secrets:
+  githubClientID: ""
+  githubClientSecret: ""
+  githubWebhookSecret: ""
+  slackBotToken: ""
+  slackSigningSecret: ""
+
+# Or reference a pre-created Kubernetes Secret (for production).
+existingSecret: ""
+
+persistence:
+  enabled: true
+  storageClass: ""
+  size: 100Mi
+  accessModes:
+    - ReadWriteOnce
+
+gateway:
+  enabled: false
+  hostname: ""
+  parentRefs: []
+  #   - name: my-gateway
+  #     namespace: gateway-system
+
+serviceAccount:
+  create: true
+  name: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 128Mi
