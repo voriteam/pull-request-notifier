@@ -18,6 +18,11 @@ import (
 
 const apiBase = "https://api.github.com"
 
+type cachedName struct {
+	name      string
+	expiresAt time.Time
+}
+
 // Client makes authenticated calls to the GitHub REST API.
 type Client struct {
 	httpClient     *http.Client
@@ -28,11 +33,14 @@ type Client struct {
 	mu               sync.Mutex
 	installToken     string
 	installTokenExp  time.Time
+
+	nameMu    sync.RWMutex
+	nameCache map[string]cachedName
 }
 
 // NewClient returns a new GitHub API client with GitHub App authentication.
 func NewClient(appID, privateKeyPEM, installationID string) (*Client, error) {
-	c := &Client{httpClient: http.DefaultClient}
+	c := &Client{httpClient: http.DefaultClient, nameCache: make(map[string]cachedName)}
 
 	if appID != "" && privateKeyPEM != "" && installationID != "" {
 		key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(privateKeyPEM))
@@ -111,10 +119,38 @@ func (c *Client) GetInstallationToken() (string, error) {
 	return c.installToken, nil
 }
 
+// GetUserDisplayName returns the full name for a GitHub login, falling back to the login itself.
+// Results are cached for 4 hours.
+func (c *Client) GetUserDisplayName(login string) string {
+	c.nameMu.RLock()
+	if cached, ok := c.nameCache[login]; ok && time.Now().Before(cached.expiresAt) {
+		c.nameMu.RUnlock()
+		return cached.name
+	}
+	c.nameMu.RUnlock()
+
+	name := login // default fallback
+	token, err := c.GetInstallationToken()
+	if err == nil {
+		var user struct {
+			Name string `json:"name"`
+		}
+		if err := c.get(token, "/users/"+login, &user); err == nil && user.Name != "" {
+			name = user.Name
+		}
+	}
+
+	c.nameMu.Lock()
+	c.nameCache[login] = cachedName{name: name, expiresAt: time.Now().Add(4 * time.Hour)}
+	c.nameMu.Unlock()
+
+	return name
+}
+
 // PRActivity holds aggregated review and comment activity for a PR.
 type PRActivity struct {
-	Approvals    []string // GitHub usernames who approved
-	Commenters   map[string]int // username → count
+	Approvals     []string       // display names of users who approved
+	Commenters    map[string]int // display name → count
 	TotalComments int
 }
 
@@ -148,9 +184,9 @@ func (c *Client) GetPRActivity(repo string, prNumber int) (*PRActivity, error) {
 		for _, r := range reviews {
 			latestState[r.User.Login] = r.State
 		}
-		for user, state := range latestState {
+		for login, state := range latestState {
 			if strings.EqualFold(state, "APPROVED") {
-				activity.Approvals = append(activity.Approvals, user)
+				activity.Approvals = append(activity.Approvals, c.GetUserDisplayName(login))
 			}
 		}
 	}
@@ -164,7 +200,7 @@ func (c *Client) GetPRActivity(repo string, prNumber int) (*PRActivity, error) {
 		slog.Error("fetch pr review comments", "err", err)
 	} else {
 		for _, rc := range reviewComments {
-			activity.Commenters[rc.User.Login]++
+			activity.Commenters[c.GetUserDisplayName(rc.User.Login)]++
 			activity.TotalComments++
 		}
 	}
@@ -178,7 +214,7 @@ func (c *Client) GetPRActivity(repo string, prNumber int) (*PRActivity, error) {
 		slog.Error("fetch pr issue comments", "err", err)
 	} else {
 		for _, ic := range issueComments {
-			activity.Commenters[ic.User.Login]++
+			activity.Commenters[c.GetUserDisplayName(ic.User.Login)]++
 			activity.TotalComments++
 		}
 	}

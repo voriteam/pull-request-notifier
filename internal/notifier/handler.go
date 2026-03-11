@@ -228,16 +228,18 @@ func (h *Handler) handleReviewRequested(evt *pullRequestEvent) {
 		status = "draft"
 	}
 
+	authorName := h.github.GetUserDisplayName(pr.User.Login)
+
 	activity, err := h.github.GetPRActivity(evt.Repository.FullName, pr.Number)
 	if err != nil {
 		slog.Error("fetch pr activity", "err", err)
 	}
 
 	blocks := slack.ReviewRequestedBlocks(
-		pr.User.Login, pr.Title, pr.HTMLURL,
+		authorName, pr.Title, pr.HTMLURL,
 		pr.ChangedFiles, pr.Additions, pr.Deletions, status, activity,
 	)
-	fallback := fmt.Sprintf("%s requested your review on %s", pr.User.Login, pr.Title)
+	fallback := fmt.Sprintf("%s requested your review on %s", authorName, pr.Title)
 
 	ts, err := h.slack.PostDM(slackUserID, blocks, fallback)
 	if err != nil {
@@ -246,7 +248,7 @@ func (h *Handler) handleReviewRequested(evt *pullRequestEvent) {
 	}
 
 	info := db.PRInfo{
-		Author:       pr.User.Login,
+		Author:       authorName,
 		Title:        pr.Title,
 		URL:          pr.HTMLURL,
 		FilesChanged: pr.ChangedFiles,
@@ -337,8 +339,9 @@ func (h *Handler) handlePullRequestReview(body []byte) {
 	}
 
 	pr := evt.PullRequest
-	blocks := slack.ReviewSubmittedBlocks(reviewer, pr.Title, pr.HTMLURL, state, evt.Review.Body)
-	fallback := fmt.Sprintf("%s reviewed %s", reviewer, pr.Title)
+	reviewerName := h.github.GetUserDisplayName(reviewer)
+	blocks := slack.ReviewSubmittedBlocks(reviewerName, pr.Title, pr.HTMLURL, state, evt.Review.Body)
+	fallback := fmt.Sprintf("%s reviewed %s", reviewerName, pr.Title)
 
 	if _, err := h.slack.PostDM(slackUserID, blocks, fallback); err != nil {
 		slog.Error("send review submitted DM", "err", err)
@@ -381,8 +384,9 @@ func (h *Handler) handlePullRequestReviewComment(body []byte) {
 		CommentType: "review_comment",
 	}
 
-	blocks := slack.CommentBlocks(commenter, pr.Title, pr.HTMLURL, evt.Comment.Body, ctx)
-	fallback := fmt.Sprintf("%s commented on %s", commenter, pr.Title)
+	commenterName := h.github.GetUserDisplayName(commenter)
+	blocks := slack.CommentBlocks(commenterName, pr.Title, pr.HTMLURL, evt.Comment.Body, ctx)
+	fallback := fmt.Sprintf("%s commented on %s", commenterName, pr.Title)
 
 	ts, err := h.slack.PostDM(slackUserID, blocks, fallback)
 	if err != nil {
@@ -440,8 +444,9 @@ func (h *Handler) handleIssueComment(body []byte) {
 		CommentType: "pr_comment",
 	}
 
-	blocks := slack.CommentBlocks(commenter, evt.Issue.Title, evt.Issue.HTMLURL, evt.Comment.Body, ctx)
-	fallback := fmt.Sprintf("%s commented on %s", commenter, evt.Issue.Title)
+	commenterName := h.github.GetUserDisplayName(commenter)
+	blocks := slack.CommentBlocks(commenterName, evt.Issue.Title, evt.Issue.HTMLURL, evt.Comment.Body, ctx)
+	fallback := fmt.Sprintf("%s commented on %s", commenterName, evt.Issue.Title)
 
 	ts, err := h.slack.PostDM(slackUserID, blocks, fallback)
 	if err != nil {
