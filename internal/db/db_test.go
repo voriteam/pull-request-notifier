@@ -114,10 +114,11 @@ func TestOAuthState(t *testing.T) {
 func TestPRMessages(t *testing.T) {
 	store := newTestStore(t)
 
-	if err := store.SavePRMessage("owner/repo", 42, "U111", "ts-001"); err != nil {
+	info := db.PRInfo{Author: "alice", Title: "Test PR", URL: "https://github.com/owner/repo/pull/42", FilesChanged: 3, Additions: 10, Deletions: 5}
+	if err := store.SavePRMessage("owner/repo", 42, "U111", "ts-001", info); err != nil {
 		t.Fatalf("save pr message: %v", err)
 	}
-	if err := store.SavePRMessage("owner/repo", 42, "U222", "ts-002"); err != nil {
+	if err := store.SavePRMessage("owner/repo", 42, "U222", "ts-002", info); err != nil {
 		t.Fatalf("save pr message 2: %v", err)
 	}
 

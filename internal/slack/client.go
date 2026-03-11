@@ -102,29 +102,6 @@ func (c *Client) OpenModal(triggerID string, view map[string]any) error {
 	return nil
 }
 
-// PublishHomeTab publishes or updates the App Home tab for a user.
-func (c *Client) PublishHomeTab(userID string, blocks []Block) error {
-	payload := map[string]any{
-		"user_id": userID,
-		"view": map[string]any{
-			"type":   "home",
-			"blocks": blocks,
-		},
-	}
-
-	var result struct {
-		OK    bool   `json:"ok"`
-		Error string `json:"error"`
-	}
-	if err := c.post("views.publish", payload, &result); err != nil {
-		return err
-	}
-	if !result.OK {
-		return fmt.Errorf("views.publish: %s", result.Error)
-	}
-	return nil
-}
-
 // openConversation opens (or retrieves) a DM channel with a user.
 func (c *Client) openConversation(userID string) (string, error) {
 	payload := map[string]any{

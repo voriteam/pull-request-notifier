@@ -33,8 +33,6 @@ const (
 	blockContext = "context"
 	blockActions = "actions"
 	blockInput   = "input"
-	blockDivider = "divider"
-
 	textMrkdwn    = "mrkdwn"
 	textPlainText = "plain_text"
 )
@@ -60,10 +58,6 @@ func sectionBlock(text string) block {
 
 func contextBlock(text string) block {
 	return block{"type": blockContext, "elements": []textObj{mrkdwn(text)}}
-}
-
-func dividerBlock() block {
-	return block{"type": blockDivider}
 }
 
 // ReviewRequestedBlocks builds the Block Kit payload for a review-requested DM.
@@ -268,53 +262,6 @@ func CheckRunFailedBlocks(checkName, checkURL, repoName, branch string) []block 
 	return []block{
 		sectionBlock(fmt.Sprintf("❌ Check *<%s|%s>* failed", checkURL, checkName)),
 		contextBlock(fmt.Sprintf("Repository: *%s*    Branch: *%s*", repoName, branch)),
-	}
-}
-
-// HomeTabLinkedBlocks builds the Home tab for a user who has linked their GitHub account.
-func HomeTabLinkedBlocks(githubUsername string) []block {
-	return []block{
-		sectionBlock("*PR Notifier*"),
-		dividerBlock(),
-		sectionBlock(fmt.Sprintf("Your GitHub account *%s* is linked. You'll receive PR notifications here as DMs.", githubUsername)),
-		{
-			"type": blockActions,
-			"elements": []element{
-				{
-					"type":      "button",
-					"text":      plain("Unlink GitHub Account"),
-					"action_id": "unlink_github",
-					"style":     "danger",
-					"confirm": map[string]any{
-						"title":   plain("Unlink GitHub?"),
-						"text":    mrkdwn(fmt.Sprintf("This will stop notifications for *%s*. You can re-link at any time.", githubUsername)),
-						"confirm": plain("Unlink"),
-						"deny":    plain("Cancel"),
-					},
-				},
-			},
-		},
-	}
-}
-
-// HomeTabUnlinkedBlocks builds the Home tab for a user who hasn't linked yet.
-func HomeTabUnlinkedBlocks(oauthURL string) []block {
-	return []block{
-		sectionBlock("*PR Notifier*"),
-		dividerBlock(),
-		sectionBlock("Link your GitHub account to receive pull request notifications as DMs."),
-		{
-			"type": blockActions,
-			"elements": []element{
-				{
-					"type":      "button",
-					"text":      plain("Link GitHub Account"),
-					"action_id": "link_github",
-					"url":       oauthURL,
-					"style":     "primary",
-				},
-			},
-		},
 	}
 }
 
