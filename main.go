@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	slog.Info("starting", "version", os.Getenv("VERSION"))
 
 	cfg := config.Load()
 
@@ -52,8 +54,8 @@ func main() {
 
 	// Health check.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(fmt.Sprintf(`{"status":"ok","version":"%s"}`, os.Getenv("VERSION"))))
 	})
 
 	slog.Info("starting server", "port", cfg.Port)

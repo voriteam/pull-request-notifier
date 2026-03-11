@@ -22,6 +22,9 @@ COPY --from=builder /app/pull-request-notifier .
 # Data directory for SQLite — mount a volume here in production.
 RUN mkdir -p /data && chown app:app /data
 
+ARG VERSION=dev
+ENV VERSION=${VERSION}
+
 USER app
 
 EXPOSE 8080

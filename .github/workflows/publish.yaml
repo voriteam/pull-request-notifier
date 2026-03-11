@@ -41,6 +41,7 @@ jobs:
         with:
           context: .
           platforms: ${{ matrix.platform }}
+          build-args: VERSION=${{ github.sha }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=registry,ref=${{ env.IMAGE }}:${{ matrix.cache_tag }}
           cache-to: type=registry,ref=${{ env.IMAGE }}:${{ matrix.cache_tag }},mode=max
