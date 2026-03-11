@@ -43,6 +43,8 @@ func NewClient(appID, privateKeyPEM, installationID string) (*Client, error) {
 	c := &Client{httpClient: http.DefaultClient, nameCache: make(map[string]cachedName)}
 
 	if appID != "" && privateKeyPEM != "" && installationID != "" {
+		// Support PEM keys passed with literal \n (e.g. from .env files or k8s secrets).
+		privateKeyPEM = strings.ReplaceAll(privateKeyPEM, `\n`, "\n")
 		key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(privateKeyPEM))
 		if err != nil {
 			return nil, fmt.Errorf("parse github app private key: %w", err)
