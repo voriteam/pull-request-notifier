@@ -84,6 +84,82 @@ func (h *Handler) handleLinkGitHub(w http.ResponseWriter, slackUserID string) {
 	})
 }
 
+// HandleEvent handles POST /slack/events (Events API).
+func (h *Handler) HandleEvent(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	// Slack sends a url_verification challenge on first setup.
+	var envelope struct {
+		Type      string `json:"type"`
+		Challenge string `json:"challenge"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+
+	if envelope.Type == "url_verification" {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte(envelope.Challenge))
+		return
+	}
+
+	// For all other events, verify the signature.
+	// Re-create the request body for verification since we already read it.
+	r.Body = io.NopCloser(strings.NewReader(string(body)))
+	if _, err := h.verifyAndRead(r); err != nil {
+		slog.Error("slack event: verification failed", "err", err)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+
+	var event struct {
+		Event struct {
+			Type string `json:"type"`
+			User string `json:"user"`
+		} `json:"event"`
+	}
+	if err := json.Unmarshal(body, &event); err != nil {
+		return
+	}
+
+	switch event.Event.Type {
+	case "app_home_opened":
+		go h.handleAppHomeOpened(event.Event.User)
+	}
+}
+
+func (h *Handler) handleAppHomeOpened(slackUserID string) {
+	mapping, err := h.store.GetMappingBySlackUserID(slackUserID)
+	if err != nil {
+		slog.Error("lookup mapping for home tab", "err", err)
+		return
+	}
+
+	var blocks []Block
+	if mapping != nil {
+		blocks = HomeTabLinkedBlocks(mapping.GitHubUsername)
+	} else {
+		state := randomHex(16)
+		if err := h.store.SaveOAuthState(state, slackUserID); err != nil {
+			slog.Error("save oauth state for home tab", "err", err)
+			return
+		}
+		oauthURL := fmt.Sprintf("%s/oauth/github?state=%s", h.oauthBaseURL, state)
+		blocks = HomeTabUnlinkedBlocks(oauthURL)
+	}
+
+	if err := h.slack.PublishHomeTab(slackUserID, blocks); err != nil {
+		slog.Error("publish home tab", "err", err)
+	}
+}
+
 // HandleInteraction handles POST /slack/interactions (button clicks, modal submissions).
 func (h *Handler) HandleInteraction(w http.ResponseWriter, r *http.Request) {
 	body, err := h.verifyAndRead(r)
@@ -131,6 +207,9 @@ func (h *Handler) handleBlockActions(w http.ResponseWriter, payload *interaction
 
 		case action.ActionID == "react_overflow":
 			h.handleReaction(payload.User.ID, action.BlockID, action.SelectedOption.Value)
+
+		case action.ActionID == "unlink_github":
+			go h.handleUnlinkGitHub(payload.User.ID)
 		}
 	}
 }
@@ -145,6 +224,15 @@ func (h *Handler) handleReplyButton(triggerID, blockID string) {
 	if err := h.slack.OpenModal(triggerID, modal); err != nil {
 		slog.Error("open reply modal", "err", err)
 	}
+}
+
+func (h *Handler) handleUnlinkGitHub(slackUserID string) {
+	if err := h.store.DeleteMappingBySlackUserID(slackUserID); err != nil {
+		slog.Error("unlink github", "err", err)
+		return
+	}
+	// Refresh the Home tab to show the unlinked state.
+	h.handleAppHomeOpened(slackUserID)
 }
 
 func (h *Handler) handleReaction(slackUserID, blockID, reaction string) {

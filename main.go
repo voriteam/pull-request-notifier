@@ -39,6 +39,7 @@ func main() {
 
 	// Slack endpoints.
 	mux.HandleFunc("POST /slack/commands", slackHandler.HandleCommand)
+	mux.HandleFunc("POST /slack/events", slackHandler.HandleEvent)
 	mux.HandleFunc("POST /slack/interactions", slackHandler.HandleInteraction)
 
 	// GitHub OAuth flow.

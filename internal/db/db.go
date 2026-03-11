@@ -34,7 +34,7 @@ func (s *Store) migrate() error {
 		CREATE TABLE IF NOT EXISTS user_mappings (
 			github_username TEXT PRIMARY KEY,
 			slack_user_id   TEXT NOT NULL UNIQUE,
-			github_token    TEXT NOT NULL,
+			github_token    TEXT NOT NULL DEFAULT '',
 			created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -70,6 +70,14 @@ func (s *Store) migrate() error {
 
 		CREATE INDEX IF NOT EXISTS idx_comment_messages_ts
 			ON comment_messages(slack_message_ts);
+
+		CREATE TABLE IF NOT EXISTS pr_authors (
+			repo            TEXT NOT NULL,
+			pr_number       INTEGER NOT NULL,
+			github_username TEXT NOT NULL,
+			created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (repo, pr_number)
+		);
 	`)
 	return err
 }
@@ -122,6 +130,12 @@ func (s *Store) GetMappingBySlackUserID(slackUserID string) (*UserMapping, error
 		return nil, err
 	}
 	return &m, nil
+}
+
+// DeleteMappingBySlackUserID removes a user mapping by Slack user ID.
+func (s *Store) DeleteMappingBySlackUserID(slackUserID string) error {
+	_, err := s.db.Exec(`DELETE FROM user_mappings WHERE slack_user_id = ?`, slackUserID)
+	return err
 }
 
 // --- OAuth States ---
@@ -190,6 +204,31 @@ func (s *Store) GetPRMessages(repo string, prNumber int) ([]PRMessage, error) {
 		msgs = append(msgs, m)
 	}
 	return msgs, rows.Err()
+}
+
+// --- PR Authors ---
+
+// SavePRAuthor stores the author of a PR for later lookup (e.g., check failure notifications).
+func (s *Store) SavePRAuthor(repo string, prNumber int, githubUsername string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO pr_authors (repo, pr_number, github_username)
+		VALUES (?, ?, ?)
+		ON CONFLICT(repo, pr_number) DO UPDATE SET github_username = excluded.github_username
+	`, repo, prNumber, githubUsername)
+	return err
+}
+
+// GetPRAuthor returns the GitHub username of the PR author, or "" if not found.
+func (s *Store) GetPRAuthor(repo string, prNumber int) (string, error) {
+	var username string
+	err := s.db.QueryRow(
+		`SELECT github_username FROM pr_authors WHERE repo = ? AND pr_number = ?`,
+		repo, prNumber,
+	).Scan(&username)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return username, err
 }
 
 // --- Comment Messages ---

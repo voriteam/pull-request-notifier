@@ -4,6 +4,10 @@ display_information:
   background_color: "#24292f"
 
 features:
+  app_home:
+    home_tab_enabled: true
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: true
   bot_user:
     display_name: PR Notifier
     always_online: true
@@ -21,9 +25,12 @@ oauth_config:
       - im:write
 
 settings:
+  event_subscriptions:
+    request_url: https://YOUR_DOMAIN/slack/events
+    bot_events:
+      - app_home_opened
   interactivity:
     is_enabled: true
     request_url: https://YOUR_DOMAIN/slack/interactions
   org_deploy_enabled: false
   socket_mode_enabled: false
-  token_rotation_enabled: false

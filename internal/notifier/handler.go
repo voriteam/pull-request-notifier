@@ -148,9 +148,10 @@ type comment struct {
 }
 
 type checkRunEvent struct {
-	Action   string   `json:"action"`
-	CheckRun checkRun `json:"check_run"`
-	Repository ghRepo `json:"repository"`
+	Action     string   `json:"action"`
+	CheckRun   checkRun `json:"check_run"`
+	Repository ghRepo   `json:"repository"`
+	Sender     ghUser   `json:"sender"`
 }
 
 type checkRun struct {
@@ -187,6 +188,11 @@ func (h *Handler) handlePullRequest(body []byte) {
 	if err := json.Unmarshal(body, &evt); err != nil {
 		slog.Error("parse pull_request event", "err", err)
 		return
+	}
+
+	// Track the PR author on any pull_request event so we can notify them on check failures.
+	if err := h.store.SavePRAuthor(evt.Repository.FullName, evt.PullRequest.Number, evt.PullRequest.User.Login); err != nil {
+		slog.Error("save pr author", "err", err)
 	}
 
 	switch evt.Action {
@@ -421,42 +427,40 @@ func (h *Handler) handleCheckRun(body []byte) {
 		return
 	}
 
-	// Notify the PR author for each associated pull request.
+	repo := evt.Repository.FullName
+
 	for _, pr := range evt.CheckRun.PullRequests {
-		msgs, err := h.store.GetPRMessages(evt.Repository.FullName, pr.Number)
+		author, err := h.store.GetPRAuthor(repo, pr.Number)
 		if err != nil {
-			slog.Error("get pr messages for check_run", "err", err)
+			slog.Error("get pr author for check_run", "err", err)
+			continue
+		}
+		// Fall back to the webhook sender (the user who pushed) for PRs
+		// opened before this service was deployed.
+		if author == "" {
+			author = evt.Sender.Login
+		}
+		if author == "" {
 			continue
 		}
 
-		// We need the PR author's Slack ID. The check_run event doesn't include
-		// the PR author directly, but we stored messages for all reviewers.
-		// Look up all unique users who have PR messages — the author is the one
-		// who triggered the check. Instead, just notify all users with PR messages
-		// for this PR (they're the reviewers who care about the PR status).
-		// Actually, for check failures we want to notify the PR author.
-		// We'll look up all mapped users and find who opened the PR.
-		// Since check_run doesn't carry PR author info, we notify all users
-		// who have a mapping and a stored PR message for this PR — this means
-		// reviewers get notified too, which is useful.
+		slackUserID, err := h.store.GetMappingByGitHubUsername(author)
+		if err != nil {
+			slog.Error("lookup author mapping for check_run", "github", author, "err", err)
+			continue
+		}
+		if slackUserID == "" {
+			continue
+		}
 
-		// Deduplicate: only notify each user once per check failure.
-		notified := make(map[string]bool)
-		for _, msg := range msgs {
-			if notified[msg.SlackUserID] {
-				continue
-			}
-			notified[msg.SlackUserID] = true
+		blocks := slack.CheckRunFailedBlocks(
+			evt.CheckRun.Name, evt.CheckRun.HTMLURL,
+			evt.Repository.Name, pr.Head.Ref,
+		)
+		fallback := fmt.Sprintf("Check %s failed", evt.CheckRun.Name)
 
-			blocks := slack.CheckRunFailedBlocks(
-				evt.CheckRun.Name, evt.CheckRun.HTMLURL,
-				evt.Repository.Name, pr.Head.Ref,
-			)
-			fallback := fmt.Sprintf("Check %s failed", evt.CheckRun.Name)
-
-			if _, err := h.slack.PostDM(msg.SlackUserID, blocks, fallback); err != nil {
-				slog.Error("send check_run failure DM", "slack_user_id", msg.SlackUserID, "err", err)
-			}
+		if _, err := h.slack.PostDM(slackUserID, blocks, fallback); err != nil {
+			slog.Error("send check_run failure DM", "slack_user_id", slackUserID, "err", err)
 		}
 	}
 }
