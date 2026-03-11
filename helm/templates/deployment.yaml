@@ -40,42 +40,42 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ $secretName }}
-                  key: github-client-id
+                  key: GITHUB_CLIENT_ID
             - name: GITHUB_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ $secretName }}
-                  key: github-client-secret
+                  key: GITHUB_CLIENT_SECRET
             - name: GITHUB_WEBHOOK_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ $secretName }}
-                  key: github-webhook-secret
+                  key: GITHUB_WEBHOOK_SECRET
             - name: GITHUB_APP_ID
               valueFrom:
                 secretKeyRef:
                   name: {{ $secretName }}
-                  key: github-app-id
+                  key: GITHUB_APP_ID
             - name: GITHUB_PRIVATE_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ $secretName }}
-                  key: github-private-key
+                  key: GITHUB_PRIVATE_KEY
             - name: GITHUB_INSTALLATION_ID
               valueFrom:
                 secretKeyRef:
                   name: {{ $secretName }}
-                  key: github-installation-id
+                  key: GITHUB_INSTALLATION_ID
             - name: SLACK_BOT_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ $secretName }}
-                  key: slack-bot-token
+                  key: SLACK_BOT_TOKEN
             - name: SLACK_SIGNING_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ $secretName }}
-                  key: slack-signing-secret
+                  key: SLACK_SIGNING_SECRET
           livenessProbe:
             httpGet:
               path: /healthz
