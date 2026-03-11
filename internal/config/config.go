@@ -13,6 +13,9 @@ type Config struct {
 	GitHubClientID      string
 	GitHubClientSecret  string
 	GitHubWebhookSecret string
+	GitHubAppID         string
+	GitHubPrivateKey    string
+	GitHubInstallationID string
 	SlackBotToken       string
 	SlackSigningSecret  string
 }
@@ -20,14 +23,17 @@ type Config struct {
 // Load reads configuration from environment variables. Panics on missing required values.
 func Load() *Config {
 	return &Config{
-		Port:                getEnv("PORT", "8080"),
-		DBPath:              getEnv("DB_PATH", "/data/pr-notifier.db"),
-		BaseURL:             mustGetEnv("BASE_URL"),
-		GitHubClientID:      mustGetEnv("GITHUB_CLIENT_ID"),
-		GitHubClientSecret:  mustGetEnv("GITHUB_CLIENT_SECRET"),
-		GitHubWebhookSecret: mustGetEnv("GITHUB_WEBHOOK_SECRET"),
-		SlackBotToken:       mustGetEnv("SLACK_BOT_TOKEN"),
-		SlackSigningSecret:  mustGetEnv("SLACK_SIGNING_SECRET"),
+		Port:                 getEnv("PORT", "8080"),
+		DBPath:               getEnv("DB_PATH", "/data/pr-notifier.db"),
+		BaseURL:              mustGetEnv("BASE_URL"),
+		GitHubClientID:       mustGetEnv("GITHUB_CLIENT_ID"),
+		GitHubClientSecret:   mustGetEnv("GITHUB_CLIENT_SECRET"),
+		GitHubWebhookSecret:  mustGetEnv("GITHUB_WEBHOOK_SECRET"),
+		GitHubAppID:          mustGetEnv("GITHUB_APP_ID"),
+		GitHubPrivateKey:     mustGetEnv("GITHUB_PRIVATE_KEY"),
+		GitHubInstallationID: mustGetEnv("GITHUB_INSTALLATION_ID"),
+		SlackBotToken:        mustGetEnv("SLACK_BOT_TOKEN"),
+		SlackSigningSecret:   mustGetEnv("SLACK_SIGNING_SECRET"),
 	}
 }
 

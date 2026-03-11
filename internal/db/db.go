@@ -51,6 +51,13 @@ func (s *Store) migrate() error {
 			pr_number        INTEGER NOT NULL,
 			slack_user_id    TEXT NOT NULL,
 			slack_message_ts TEXT NOT NULL UNIQUE,
+			pr_author        TEXT NOT NULL DEFAULT '',
+			pr_title         TEXT NOT NULL DEFAULT '',
+			pr_url           TEXT NOT NULL DEFAULT '',
+			pr_files_changed INTEGER NOT NULL DEFAULT 0,
+			pr_additions     INTEGER NOT NULL DEFAULT 0,
+			pr_deletions     INTEGER NOT NULL DEFAULT 0,
+			pr_draft         INTEGER NOT NULL DEFAULT 0,
 			created_at       DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
@@ -71,6 +78,28 @@ func (s *Store) migrate() error {
 		CREATE INDEX IF NOT EXISTS idx_comment_messages_ts
 			ON comment_messages(slack_message_ts);
 
+		-- Add columns to pr_messages for existing databases.
+		-- SQLite ignores ALTER TABLE ADD COLUMN if the column already exists? No, it errors.
+		-- We use a workaround: create a temp trigger-based approach... Actually, simpler:
+	`)
+	if err != nil {
+		return err
+	}
+
+	// Add new columns to pr_messages (ignore errors if they already exist).
+	for _, col := range []string{
+		"ALTER TABLE pr_messages ADD COLUMN pr_author TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE pr_messages ADD COLUMN pr_title TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE pr_messages ADD COLUMN pr_url TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE pr_messages ADD COLUMN pr_files_changed INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE pr_messages ADD COLUMN pr_additions INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE pr_messages ADD COLUMN pr_deletions INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE pr_messages ADD COLUMN pr_draft INTEGER NOT NULL DEFAULT 0",
+	} {
+		s.db.Exec(col) // Ignore "duplicate column" errors.
+	}
+
+	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS pr_authors (
 			repo            TEXT NOT NULL,
 			pr_number       INTEGER NOT NULL,
@@ -169,25 +198,42 @@ func (s *Store) ConsumeOAuthState(state string) (string, error) {
 
 // --- PR Messages ---
 
+// PRInfo holds PR metadata needed to reconstruct the review-requested DM.
+type PRInfo struct {
+	Author       string
+	Title        string
+	URL          string
+	FilesChanged int
+	Additions    int
+	Deletions    int
+	Draft        bool
+}
+
 // SavePRMessage stores the Slack message TS for a review-requested DM so it can be edited later.
-func (s *Store) SavePRMessage(repo string, prNumber int, slackUserID, messageTS string) error {
+func (s *Store) SavePRMessage(repo string, prNumber int, slackUserID, messageTS string, info PRInfo) error {
+	draft := 0
+	if info.Draft {
+		draft = 1
+	}
 	_, err := s.db.Exec(`
-		INSERT OR IGNORE INTO pr_messages (repo, pr_number, slack_user_id, slack_message_ts)
-		VALUES (?, ?, ?, ?)
-	`, repo, prNumber, slackUserID, messageTS)
+		INSERT OR IGNORE INTO pr_messages
+			(repo, pr_number, slack_user_id, slack_message_ts, pr_author, pr_title, pr_url, pr_files_changed, pr_additions, pr_deletions, pr_draft)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, repo, prNumber, slackUserID, messageTS, info.Author, info.Title, info.URL, info.FilesChanged, info.Additions, info.Deletions, draft)
 	return err
 }
 
 // PRMessage represents a stored review-requested DM.
 type PRMessage struct {
-	SlackUserID string
-	MessageTS   string
+	SlackUserID  string
+	MessageTS    string
+	PRInfo
 }
 
 // GetPRMessages returns all stored DMs for a given PR (used when updating on merge/close).
 func (s *Store) GetPRMessages(repo string, prNumber int) ([]PRMessage, error) {
 	rows, err := s.db.Query(`
-		SELECT slack_user_id, slack_message_ts
+		SELECT slack_user_id, slack_message_ts, pr_author, pr_title, pr_url, pr_files_changed, pr_additions, pr_deletions, pr_draft
 		FROM pr_messages WHERE repo = ? AND pr_number = ?
 	`, repo, prNumber)
 	if err != nil {
@@ -198,9 +244,11 @@ func (s *Store) GetPRMessages(repo string, prNumber int) ([]PRMessage, error) {
 	var msgs []PRMessage
 	for rows.Next() {
 		var m PRMessage
-		if err := rows.Scan(&m.SlackUserID, &m.MessageTS); err != nil {
+		var draft int
+		if err := rows.Scan(&m.SlackUserID, &m.MessageTS, &m.Author, &m.Title, &m.URL, &m.FilesChanged, &m.Additions, &m.Deletions, &draft); err != nil {
 			return nil, err
 		}
+		m.Draft = draft == 1
 		msgs = append(msgs, m)
 	}
 	return msgs, rows.Err()

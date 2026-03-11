@@ -15,6 +15,9 @@ secrets:
   githubClientID: ""
   githubClientSecret: ""
   githubWebhookSecret: ""
+  githubAppID: ""
+  githubPrivateKey: ""
+  githubInstallationID: ""
   slackBotToken: ""
   slackSigningSecret: ""
 

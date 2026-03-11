@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/voriteam/pull-request-notifier/internal/db"
+	"github.com/voriteam/pull-request-notifier/internal/github"
 	"github.com/voriteam/pull-request-notifier/internal/slack"
 )
 
@@ -20,14 +21,16 @@ type Handler struct {
 	webhookSecret string
 	store         *db.Store
 	slack         *slack.Client
+	github        *github.Client
 }
 
 // NewHandler creates a new GitHub webhook handler.
-func NewHandler(webhookSecret string, store *db.Store, slackClient *slack.Client) *Handler {
+func NewHandler(webhookSecret string, store *db.Store, slackClient *slack.Client, githubClient *github.Client) *Handler {
 	return &Handler{
 		webhookSecret: webhookSecret,
 		store:         store,
 		slack:         slackClient,
+		github:        githubClient,
 	}
 }
 
@@ -225,9 +228,14 @@ func (h *Handler) handleReviewRequested(evt *pullRequestEvent) {
 		status = "draft"
 	}
 
+	activity, err := h.github.GetPRActivity(evt.Repository.FullName, pr.Number)
+	if err != nil {
+		slog.Error("fetch pr activity", "err", err)
+	}
+
 	blocks := slack.ReviewRequestedBlocks(
 		pr.User.Login, pr.Title, pr.HTMLURL,
-		pr.ChangedFiles, pr.Additions, pr.Deletions, status,
+		pr.ChangedFiles, pr.Additions, pr.Deletions, status, activity,
 	)
 	fallback := fmt.Sprintf("%s requested your review on %s", pr.User.Login, pr.Title)
 
@@ -237,7 +245,16 @@ func (h *Handler) handleReviewRequested(evt *pullRequestEvent) {
 		return
 	}
 
-	if err := h.store.SavePRMessage(evt.Repository.FullName, pr.Number, slackUserID, ts); err != nil {
+	info := db.PRInfo{
+		Author:       pr.User.Login,
+		Title:        pr.Title,
+		URL:          pr.HTMLURL,
+		FilesChanged: pr.ChangedFiles,
+		Additions:    pr.Additions,
+		Deletions:    pr.Deletions,
+		Draft:        pr.Draft,
+	}
+	if err := h.store.SavePRMessage(evt.Repository.FullName, pr.Number, slackUserID, ts, info); err != nil {
 		slog.Error("save pr message", "err", err)
 	}
 }
@@ -252,6 +269,11 @@ func (h *Handler) handlePRClosed(evt *pullRequestEvent) {
 		return
 	}
 
+	activity, err := h.github.GetPRActivity(repo, pr.Number)
+	if err != nil {
+		slog.Error("fetch pr activity for close", "err", err)
+	}
+
 	for _, msg := range msgs {
 		var blocks []slack.Block
 		var fallback string
@@ -259,19 +281,19 @@ func (h *Handler) handlePRClosed(evt *pullRequestEvent) {
 		if pr.Merged {
 			blocks = slack.ReviewRequestedMergedBlocks(
 				pr.User.Login, pr.Title, pr.HTMLURL,
-				pr.ChangedFiles, pr.Additions, pr.Deletions,
+				pr.ChangedFiles, pr.Additions, pr.Deletions, activity,
 			)
 			fallback = fmt.Sprintf("%s merged", pr.Title)
 		} else {
 			blocks = slack.ReviewRequestedClosedBlocks(
 				pr.User.Login, pr.Title, pr.HTMLURL,
-				pr.ChangedFiles, pr.Additions, pr.Deletions,
+				pr.ChangedFiles, pr.Additions, pr.Deletions, activity,
 			)
 			fallback = fmt.Sprintf("%s closed", pr.Title)
 		}
 
 		// Slack DMs use the user ID as the channel for chat.update.
-		if err := h.slack.UpdateMessage(msg.SlackUserID, msg.MessageTS, blocks, fallback); err != nil {
+		if err := h.slack.UpdateDM(msg.SlackUserID, msg.MessageTS, blocks, fallback); err != nil {
 			slog.Error("update pr message on close", "slack_user_id", msg.SlackUserID, "err", err)
 		}
 	}
@@ -287,6 +309,9 @@ func (h *Handler) handlePullRequestReview(body []byte) {
 	if evt.Action != "submitted" {
 		return
 	}
+
+	// Refresh all existing review-requested DMs for this PR with updated activity.
+	h.refreshPRMessages(evt.Repository.FullName, evt.PullRequest)
 
 	// Only notify on approved, changes_requested, or commented (with body).
 	state := evt.Review.State
@@ -331,8 +356,14 @@ func (h *Handler) handlePullRequestReviewComment(body []byte) {
 		return
 	}
 
+	pr := evt.PullRequest
+	repo := evt.Repository.FullName
+
+	// Refresh all existing review-requested DMs for this PR with updated activity.
+	h.refreshPRMessages(repo, pr)
+
 	// Don't notify the commenter about their own comment.
-	prAuthor := evt.PullRequest.User.Login
+	prAuthor := pr.User.Login
 	commenter := evt.Comment.User.Login
 	if commenter == prAuthor {
 		return
@@ -343,8 +374,6 @@ func (h *Handler) handlePullRequestReviewComment(body []byte) {
 		return
 	}
 
-	pr := evt.PullRequest
-	repo := evt.Repository.FullName
 	ctx := slack.CommentContext{
 		Repo:        repo,
 		PRNumber:    pr.Number,
@@ -382,6 +411,16 @@ func (h *Handler) handleIssueComment(body []byte) {
 		return
 	}
 
+	repo := evt.Repository.FullName
+
+	// Refresh all existing review-requested DMs for this PR with updated activity.
+	h.refreshPRMessages(repo, pullRequest{
+		Number:  evt.Issue.Number,
+		Title:   evt.Issue.Title,
+		HTMLURL: evt.Issue.HTMLURL,
+		User:    evt.Issue.User,
+	})
+
 	// Don't notify the commenter about their own comment.
 	prAuthor := evt.Issue.User.Login
 	commenter := evt.Comment.User.Login
@@ -394,7 +433,6 @@ func (h *Handler) handleIssueComment(body []byte) {
 		return
 	}
 
-	repo := evt.Repository.FullName
 	ctx := slack.CommentContext{
 		Repo:        repo,
 		PRNumber:    evt.Issue.Number,
@@ -461,6 +499,40 @@ func (h *Handler) handleCheckRun(body []byte) {
 
 		if _, err := h.slack.PostDM(slackUserID, blocks, fallback); err != nil {
 			slog.Error("send check_run failure DM", "slack_user_id", slackUserID, "err", err)
+		}
+	}
+}
+
+// refreshPRMessages updates all existing review-requested DMs for a PR with current activity.
+func (h *Handler) refreshPRMessages(repo string, pr pullRequest) {
+	msgs, err := h.store.GetPRMessages(repo, pr.Number)
+	if err != nil {
+		slog.Error("get pr messages for refresh", "err", err)
+		return
+	}
+	if len(msgs) == 0 {
+		return
+	}
+
+	activity, err := h.github.GetPRActivity(repo, pr.Number)
+	if err != nil {
+		slog.Error("fetch pr activity for refresh", "err", err)
+		return
+	}
+	for _, msg := range msgs {
+		status := "open"
+		if msg.Draft {
+			status = "draft"
+		}
+
+		blocks := slack.ReviewRequestedBlocks(
+			msg.Author, msg.Title, msg.URL,
+			msg.FilesChanged, msg.Additions, msg.Deletions, status, activity,
+		)
+		fallback := fmt.Sprintf("%s requested your review on %s", msg.Author, msg.Title)
+
+		if err := h.slack.UpdateDM(msg.SlackUserID, msg.MessageTS, blocks, fallback); err != nil {
+			slog.Error("update pr message with activity", "slack_user_id", msg.SlackUserID, "err", err)
 		}
 	}
 }

@@ -25,12 +25,16 @@ func main() {
 	}
 	defer store.Close()
 
-	ghClient := github.NewClient()
+	ghClient, err := github.NewClient(cfg.GitHubAppID, cfg.GitHubPrivateKey, cfg.GitHubInstallationID)
+	if err != nil {
+		slog.Error("failed to create github client", "err", err)
+		os.Exit(1)
+	}
 	slackClient := slack.NewClient(cfg.SlackBotToken)
 
 	oauthHandler := oauth.NewHandler(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.BaseURL, store, ghClient, slackClient)
 	slackHandler := slack.NewHandler(cfg.SlackSigningSecret, store, ghClient, slackClient, cfg.BaseURL)
-	webhookHandler := notifier.NewHandler(cfg.GitHubWebhookSecret, store, slackClient)
+	webhookHandler := notifier.NewHandler(cfg.GitHubWebhookSecret, store, slackClient, ghClient)
 
 	mux := http.NewServeMux()
 

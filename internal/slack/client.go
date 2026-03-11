@@ -50,6 +50,16 @@ func (c *Client) PostDM(userID string, blocks []Block, fallbackText string) (str
 	return result.TS, nil
 }
 
+// UpdateDM edits an existing DM message by opening the conversation first.
+func (c *Client) UpdateDM(userID, ts string, blocks []Block, fallbackText string) error {
+	channelID, err := c.openConversation(userID)
+	if err != nil {
+		return fmt.Errorf("open conversation: %w", err)
+	}
+	return c.UpdateMessage(channelID, ts, blocks, fallbackText)
+}
+
+
 // UpdateMessage edits an existing Slack message in-place.
 func (c *Client) UpdateMessage(channel, ts string, blocks []Block, fallbackText string) error {
 	payload := map[string]any{

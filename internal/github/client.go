@@ -2,23 +2,188 @@ package github
 
 import (
 	"bytes"
+	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 )
 
 const apiBase = "https://api.github.com"
 
 // Client makes authenticated calls to the GitHub REST API.
 type Client struct {
-	httpClient *http.Client
+	httpClient     *http.Client
+	appID          string
+	privateKey     *rsa.PrivateKey
+	installationID int64
+
+	mu               sync.Mutex
+	installToken     string
+	installTokenExp  time.Time
 }
 
-// NewClient returns a new GitHub API client.
-func NewClient() *Client {
-	return &Client{httpClient: http.DefaultClient}
+// NewClient returns a new GitHub API client with GitHub App authentication.
+func NewClient(appID, privateKeyPEM, installationID string) (*Client, error) {
+	c := &Client{httpClient: http.DefaultClient}
+
+	if appID != "" && privateKeyPEM != "" && installationID != "" {
+		key, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(privateKeyPEM))
+		if err != nil {
+			return nil, fmt.Errorf("parse github app private key: %w", err)
+		}
+		instID, err := strconv.ParseInt(installationID, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("parse installation id: %w", err)
+		}
+		c.appID = appID
+		c.privateKey = key
+		c.installationID = instID
+	}
+
+	return c, nil
+}
+
+// generateJWT creates a short-lived JWT signed with the GitHub App's private key.
+func (c *Client) generateJWT() (string, error) {
+	now := time.Now()
+	claims := jwt.RegisteredClaims{
+		IssuedAt:  jwt.NewNumericDate(now.Add(-60 * time.Second)),
+		ExpiresAt: jwt.NewNumericDate(now.Add(10 * time.Minute)),
+		Issuer:    c.appID,
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	return token.SignedString(c.privateKey)
+}
+
+// GetInstallationToken returns a cached or fresh installation access token.
+func (c *Client) GetInstallationToken() (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Return cached token if it has at least 1 minute of life.
+	if c.installToken != "" && time.Now().Add(time.Minute).Before(c.installTokenExp) {
+		return c.installToken, nil
+	}
+
+	jwtToken, err := c.generateJWT()
+	if err != nil {
+		return "", fmt.Errorf("generate jwt: %w", err)
+	}
+
+	path := fmt.Sprintf("/app/installations/%d/access_tokens", c.installationID)
+	req, err := http.NewRequest(http.MethodPost, apiBase+path, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+jwtToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("create installation token: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("create installation token: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Token     string    `json:"token"`
+		ExpiresAt time.Time `json:"expires_at"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode installation token: %w", err)
+	}
+
+	c.installToken = result.Token
+	c.installTokenExp = result.ExpiresAt
+	return c.installToken, nil
+}
+
+// PRActivity holds aggregated review and comment activity for a PR.
+type PRActivity struct {
+	Approvals    []string // GitHub usernames who approved
+	Commenters   map[string]int // username → count
+	TotalComments int
+}
+
+// GetPRActivity fetches reviews and comments for a PR using an installation token.
+func (c *Client) GetPRActivity(repo string, prNumber int) (*PRActivity, error) {
+	token, err := c.GetInstallationToken()
+	if err != nil {
+		return nil, fmt.Errorf("get installation token: %w", err)
+	}
+
+	owner, repoName, err := splitRepo(repo)
+	if err != nil {
+		return nil, err
+	}
+
+	activity := &PRActivity{
+		Commenters: make(map[string]int),
+	}
+
+	// Fetch reviews
+	var reviews []struct {
+		User  struct{ Login string } `json:"user"`
+		State string                 `json:"state"`
+	}
+	reviewPath := fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews", owner, repoName, prNumber)
+	if err := c.get(token, reviewPath, &reviews); err != nil {
+		slog.Error("fetch pr reviews", "err", err)
+	} else {
+		// Track the latest review state per user.
+		latestState := make(map[string]string)
+		for _, r := range reviews {
+			latestState[r.User.Login] = r.State
+		}
+		for user, state := range latestState {
+			if strings.EqualFold(state, "APPROVED") {
+				activity.Approvals = append(activity.Approvals, user)
+			}
+		}
+	}
+
+	// Fetch review comments (inline code comments)
+	reviewCommentsPath := fmt.Sprintf("/repos/%s/%s/pulls/%d/comments?per_page=100", owner, repoName, prNumber)
+	var reviewComments []struct {
+		User struct{ Login string } `json:"user"`
+	}
+	if err := c.get(token, reviewCommentsPath, &reviewComments); err != nil {
+		slog.Error("fetch pr review comments", "err", err)
+	} else {
+		for _, rc := range reviewComments {
+			activity.Commenters[rc.User.Login]++
+			activity.TotalComments++
+		}
+	}
+
+	// Fetch issue comments (top-level PR comments)
+	issueCommentsPath := fmt.Sprintf("/repos/%s/%s/issues/%d/comments?per_page=100", owner, repoName, prNumber)
+	var issueComments []struct {
+		User struct{ Login string } `json:"user"`
+	}
+	if err := c.get(token, issueCommentsPath, &issueComments); err != nil {
+		slog.Error("fetch pr issue comments", "err", err)
+	} else {
+		for _, ic := range issueComments {
+			activity.Commenters[ic.User.Login]++
+			activity.TotalComments++
+		}
+	}
+
+	return activity, nil
 }
 
 // ExchangeCode exchanges a GitHub OAuth code for a user access token.

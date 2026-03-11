@@ -3,6 +3,9 @@ package slack
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
+
+	"github.com/voriteam/pull-request-notifier/internal/github"
 )
 
 // CommentContext is embedded in button block_ids and modal private_metadata
@@ -64,29 +67,86 @@ func dividerBlock() block {
 }
 
 // ReviewRequestedBlocks builds the Block Kit payload for a review-requested DM.
-func ReviewRequestedBlocks(authorLogin, prTitle, prURL string, filesChanged, additions, deletions int, status string) []block {
-	return []block{
+func ReviewRequestedBlocks(authorLogin, prTitle, prURL string, filesChanged, additions, deletions int, status string, activity *github.PRActivity) []block {
+	blocks := []block{
 		sectionBlock(fmt.Sprintf("🔍 *%s* requested your review on:", authorLogin)),
 		sectionBlock(fmt.Sprintf("*<%s|%s>*", prURL, prTitle)),
 		contextBlock(fmt.Sprintf("%d files changed · +%d -%d · _%s_", filesChanged, additions, deletions, status)),
 	}
+	blocks = append(blocks, activityBlocks(activity)...)
+	return blocks
 }
 
 // ReviewRequestedMergedBlocks builds the updated payload when a PR is merged.
-func ReviewRequestedMergedBlocks(authorLogin, prTitle, prURL string, filesChanged, additions, deletions int) []block {
-	return []block{
+func ReviewRequestedMergedBlocks(authorLogin, prTitle, prURL string, filesChanged, additions, deletions int, activity *github.PRActivity) []block {
+	blocks := []block{
 		sectionBlock(fmt.Sprintf("~🔍 *%s* requested your review on:~", authorLogin)),
 		sectionBlock(fmt.Sprintf("~*<%s|%s>*~", prURL, prTitle)),
 		contextBlock(fmt.Sprintf("~%d files changed · +%d -%d~ · ← Merged", filesChanged, additions, deletions)),
 	}
+	blocks = append(blocks, activityBlocks(activity)...)
+	return blocks
 }
 
 // ReviewRequestedClosedBlocks builds the updated payload when a PR is closed without merging.
-func ReviewRequestedClosedBlocks(authorLogin, prTitle, prURL string, filesChanged, additions, deletions int) []block {
-	return []block{
+func ReviewRequestedClosedBlocks(authorLogin, prTitle, prURL string, filesChanged, additions, deletions int, activity *github.PRActivity) []block {
+	blocks := []block{
 		sectionBlock(fmt.Sprintf("~🔍 *%s* requested your review on:~", authorLogin)),
 		sectionBlock(fmt.Sprintf("~*<%s|%s>*~", prURL, prTitle)),
 		contextBlock(fmt.Sprintf("~%d files changed · +%d -%d~ · ✕ Closed", filesChanged, additions, deletions)),
+	}
+	blocks = append(blocks, activityBlocks(activity)...)
+	return blocks
+}
+
+// activityBlocks builds context blocks showing approval status and comment counts.
+func activityBlocks(activity *github.PRActivity) []block {
+	if activity == nil {
+		return nil
+	}
+
+	var blocks []block
+
+	if len(activity.Approvals) > 0 {
+		blocks = append(blocks, contextBlock(fmt.Sprintf("✅ %s approved", formatUserList(activity.Approvals))))
+	}
+
+	if activity.TotalComments > 0 {
+		// Sort commenters by count descending.
+		type kv struct {
+			User  string
+			Count int
+		}
+		var sorted []kv
+		for u, c := range activity.Commenters {
+			sorted = append(sorted, kv{u, c})
+		}
+		sort.Slice(sorted, func(i, j int) bool { return sorted[i].Count > sorted[j].Count })
+
+		var names []string
+		for _, s := range sorted {
+			names = append(names, s.User)
+		}
+
+		blocks = append(blocks, contextBlock(fmt.Sprintf("💬 %d comments by %s", activity.TotalComments, formatUserList(names))))
+	}
+
+	return blocks
+}
+
+// formatUserList formats a list of usernames: "A", "A and B", "A, B, and N others".
+func formatUserList(users []string) string {
+	switch len(users) {
+	case 0:
+		return ""
+	case 1:
+		return users[0]
+	case 2:
+		return users[0] + " and " + users[1]
+	case 3:
+		return users[0] + ", " + users[1] + ", and " + users[2]
+	default:
+		return fmt.Sprintf("%s, %s, and %d others", users[0], users[1], len(users)-2)
 	}
 }
 
