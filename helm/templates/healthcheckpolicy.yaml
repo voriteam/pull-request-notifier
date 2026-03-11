@@ -1,0 +1,18 @@
+apiVersion: networking.gke.io/v1
+kind: HealthCheckPolicy
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  default:
+    config:
+      type: HTTP
+      httpHealthCheck:
+        port: {{ int .Values.config.port }}
+        requestPath: /healthz
+  targetRef:
+    group: ""
+    kind: Service
+    name: {{ .Release.Name }}
