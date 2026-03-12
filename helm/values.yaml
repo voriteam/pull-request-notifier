@@ -1,6 +1,7 @@
 replicaCount: 1
 nameOverride: ""
 containerName: ""
+goMemLimit: ""
 
 image:
   repository: ghcr.io/voriteam/pull-request-notifier

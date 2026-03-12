@@ -31,6 +31,10 @@ spec:
               containerPort: {{ int .Values.config.port }}
               protocol: TCP
           env:
+            {{- if .Values.goMemLimit }}
+            - name: GOMEMLIMIT
+              value: {{ .Values.goMemLimit | quote }}
+            {{- end }}
             - name: PORT
               value: {{ .Values.config.port | quote }}
             - name: BASE_URL
