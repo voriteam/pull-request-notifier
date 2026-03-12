@@ -48,7 +48,14 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	event := r.Header.Get("X-GitHub-Event")
-	slog.Info("received github webhook", "event", event)
+	deliveryID := r.Header.Get("X-GitHub-Delivery")
+
+	// Log the full webhook payload as raw JSON for debugging.
+	slog.Info("webhook.received",
+		"github.event", event,
+		"github.delivery_id", deliveryID,
+		"github.payload", json.RawMessage(body),
+	)
 
 	w.WriteHeader(http.StatusOK)
 
@@ -462,37 +469,53 @@ func (h *Handler) handleIssueComment(body []byte) {
 func (h *Handler) handleCheckRun(body []byte) {
 	var evt checkRunEvent
 	if err := json.Unmarshal(body, &evt); err != nil {
-		slog.Error("parse check_run event", "err", err)
-		return
-	}
-
-	if evt.Action != "completed" || evt.CheckRun.Conclusion != "failure" {
+		slog.Error("check_run.parse_failed", "err", err)
 		return
 	}
 
 	repo := evt.Repository.FullName
+	log := slog.With(
+		"github.repo", repo,
+		"github.check_name", evt.CheckRun.Name,
+		"github.action", evt.Action,
+		"github.conclusion", evt.CheckRun.Conclusion,
+		"github.head_sha", evt.CheckRun.HeadSHA,
+	)
+
+	if evt.Action != "completed" || evt.CheckRun.Conclusion != "failure" {
+		log.Debug("check_run.skipped", "reason", "not a completed failure")
+		return
+	}
+
+	if len(evt.CheckRun.PullRequests) == 0 {
+		log.Warn("check_run.no_pull_requests", "reason", "check_run event had empty pull_requests array")
+		return
+	}
 
 	for _, pr := range evt.CheckRun.PullRequests {
+		prLog := log.With("github.pr_number", pr.Number, "github.branch", pr.Head.Ref)
+
 		author, err := h.store.GetPRAuthor(repo, pr.Number)
 		if err != nil {
-			slog.Error("get pr author for check_run", "err", err)
+			prLog.Error("check_run.get_pr_author_failed", "err", err)
 			continue
 		}
-		// Fall back to the webhook sender (the user who pushed) for PRs
-		// opened before this service was deployed.
 		if author == "" {
 			author = evt.Sender.Login
+			prLog.Info("check_run.pr_author_fallback", "github.sender", author)
 		}
 		if author == "" {
+			prLog.Warn("check_run.no_author", "reason", "no stored author and no sender")
 			continue
 		}
 
 		slackUserID, err := h.store.GetMappingByGitHubUsername(author)
 		if err != nil {
-			slog.Error("lookup author mapping for check_run", "github", author, "err", err)
+			prLog.Error("check_run.lookup_mapping_failed", "github.author", author, "err", err)
 			continue
 		}
 		if slackUserID == "" {
+			prLog.Warn("check_run.no_slack_mapping", "github.author", author)
 			continue
 		}
 
@@ -503,7 +526,9 @@ func (h *Handler) handleCheckRun(body []byte) {
 		fallback := fmt.Sprintf("Check %s failed", evt.CheckRun.Name)
 
 		if _, err := h.slack.PostDM(slackUserID, blocks, fallback); err != nil {
-			slog.Error("send check_run failure DM", "slack_user_id", slackUserID, "err", err)
+			prLog.Error("check_run.send_dm_failed", "slack.user_id", slackUserID, "err", err)
+		} else {
+			prLog.Info("check_run.notified", "github.author", author, "slack.user_id", slackUserID)
 		}
 	}
 }
