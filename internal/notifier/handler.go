@@ -57,20 +57,28 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	event := r.Header.Get("X-GitHub-Event")
 	deliveryID := r.Header.Get("X-GitHub-Delivery")
 
-	// Log the full webhook payload as raw JSON for debugging.
+	// Log the full webhook payload as structured JSON for Datadog faceting.
+	var payload any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		payload = string(body)
+	}
 	slog.Info("webhook.received",
 		"github.event", event,
 		"github.delivery_id", deliveryID,
-		"github.payload", json.RawMessage(body),
+		"github.payload", payload,
 	)
 
 	w.WriteHeader(http.StatusOK)
 
-	ctx, span := tracer.Start(context.Background(), "webhook."+event, trace.WithAttributes(
+	spanAttrs := []attribute.KeyValue{
 		attribute.String("github.event", event),
 		attribute.String("github.delivery_id", deliveryID),
-		attribute.String("github.payload", string(body)),
-	))
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err == nil {
+		spanAttrs = append(spanAttrs, flattenJSON("github.payload", raw)...)
+	}
+	ctx, span := tracer.Start(context.Background(), "webhook."+event, trace.WithAttributes(spanAttrs...))
 
 	go func() {
 		defer span.End()
@@ -87,6 +95,38 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 			h.handleCheckRun(ctx, body)
 		}
 	}()
+}
+
+// flattenJSON recursively flattens a JSON map into dot-notation OTel attributes.
+func flattenJSON(prefix string, m map[string]any) []attribute.KeyValue {
+	var attrs []attribute.KeyValue
+	for k, v := range m {
+		key := prefix + "." + k
+		switch val := v.(type) {
+		case map[string]any:
+			attrs = append(attrs, flattenJSON(key, val)...)
+		case []any:
+			// Store arrays as JSON strings.
+			if b, err := json.Marshal(val); err == nil {
+				attrs = append(attrs, attribute.String(key, string(b)))
+			}
+		case string:
+			attrs = append(attrs, attribute.String(key, val))
+		case float64:
+			if val == float64(int64(val)) {
+				attrs = append(attrs, attribute.Int64(key, int64(val)))
+			} else {
+				attrs = append(attrs, attribute.Float64(key, val))
+			}
+		case bool:
+			attrs = append(attrs, attribute.Bool(key, val))
+		case nil:
+			// Skip null values.
+		default:
+			attrs = append(attrs, attribute.String(key, fmt.Sprintf("%v", val)))
+		}
+	}
+	return attrs
 }
 
 func (h *Handler) verifySignature(signature string, body []byte) bool {
