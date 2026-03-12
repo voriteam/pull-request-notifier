@@ -13,7 +13,7 @@ RUN CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o pull-request-notifier 
 # Runtime stage
 FROM alpine:3.19
 
-RUN apk add --no-cache ca-certificates tzdata && \
+RUN apk add --no-cache ca-certificates tzdata sqlite && \
     addgroup -S app && adduser -S app -G app
 
 WORKDIR /app
