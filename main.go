@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/voriteam/pull-request-notifier/internal/admin"
 	"github.com/voriteam/pull-request-notifier/internal/config"
 	"github.com/voriteam/pull-request-notifier/internal/db"
 	"github.com/voriteam/pull-request-notifier/internal/github"
@@ -34,7 +35,8 @@ func main() {
 	}
 	slackClient := slack.NewClient(cfg.SlackBotToken)
 
-	oauthHandler := oauth.NewHandler(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.BaseURL, store, ghClient, slackClient)
+	adminHandler := admin.NewHandler(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.BaseURL, cfg.GitHubWebhookSecret, store, ghClient)
+	oauthHandler := oauth.NewHandler(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.BaseURL, store, ghClient, slackClient, adminHandler)
 	slackHandler := slack.NewHandler(cfg.SlackSigningSecret, store, ghClient, slackClient, cfg.BaseURL)
 	webhookHandler := notifier.NewHandler(cfg.GitHubWebhookSecret, store, slackClient, ghClient)
 
@@ -51,6 +53,9 @@ func main() {
 	// GitHub OAuth flow.
 	mux.HandleFunc("GET /oauth/github", oauthHandler.Start)
 	mux.HandleFunc("GET /oauth/github/callback", oauthHandler.Callback)
+
+	// Admin UI.
+	mux.HandleFunc("GET /admin", adminHandler.HandleLinkedAccounts)
 
 	// Health check.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {

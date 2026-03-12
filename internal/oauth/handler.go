@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/voriteam/pull-request-notifier/internal/admin"
 	"github.com/voriteam/pull-request-notifier/internal/db"
 	"github.com/voriteam/pull-request-notifier/internal/github"
 	"github.com/voriteam/pull-request-notifier/internal/slack"
@@ -18,10 +19,11 @@ type Handler struct {
 	store        *db.Store
 	github       *github.Client
 	slack        *slack.Client
+	admin        *admin.Handler
 }
 
 // NewHandler creates a new OAuth handler.
-func NewHandler(clientID, clientSecret, baseURL string, store *db.Store, githubClient *github.Client, slackClient *slack.Client) *Handler {
+func NewHandler(clientID, clientSecret, baseURL string, store *db.Store, githubClient *github.Client, slackClient *slack.Client, adminHandler *admin.Handler) *Handler {
 	return &Handler{
 		clientID:     clientID,
 		clientSecret: clientSecret,
@@ -29,6 +31,7 @@ func NewHandler(clientID, clientSecret, baseURL string, store *db.Store, githubC
 		store:        store,
 		github:       githubClient,
 		slack:        slackClient,
+		admin:        adminHandler,
 	}
 }
 
@@ -58,6 +61,12 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 
 	if code == "" || state == "" {
 		http.Error(w, "missing code or state", http.StatusBadRequest)
+		return
+	}
+
+	// Route admin login through the admin handler.
+	if state == "admin" {
+		h.admin.CompleteLogin(w, r, code)
 		return
 	}
 

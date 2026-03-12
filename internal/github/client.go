@@ -33,6 +33,7 @@ type Client struct {
 	mu               sync.Mutex
 	installToken     string
 	installTokenExp  time.Time
+	installOrg       string
 
 	nameMu    sync.RWMutex
 	nameCache map[string]cachedName
@@ -313,6 +314,81 @@ func (c *Client) AddReaction(token, repo string, commentID int64, commentType, r
 		path := fmt.Sprintf("/repos/%s/%s/issues/comments/%d/reactions", owner, repoName, commentID)
 		return c.post(token, path, payload, nil)
 	}
+}
+
+// IsOrgMember checks whether a GitHub user is a member of the org where the app is installed.
+func (c *Client) IsOrgMember(username string) (bool, error) {
+	token, err := c.GetInstallationToken()
+	if err != nil {
+		return false, fmt.Errorf("get installation token: %w", err)
+	}
+
+	// Get the installation's org name.
+	org, err := c.getInstallationOrg(token)
+	if err != nil {
+		return false, err
+	}
+
+	path := fmt.Sprintf("/orgs/%s/members/%s", org, username)
+	req, err := http.NewRequest(http.MethodGet, apiBase+path, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("check org membership: %w", err)
+	}
+	resp.Body.Close()
+
+	return resp.StatusCode == 204, nil
+}
+
+func (c *Client) getInstallationOrg(token string) (string, error) {
+	c.mu.Lock()
+	org := c.installOrg
+	c.mu.Unlock()
+	if org != "" {
+		return org, nil
+	}
+
+	jwtToken, err := c.generateJWT()
+	if err != nil {
+		return "", err
+	}
+
+	path := fmt.Sprintf("/app/installations/%d", c.installationID)
+	req, err := http.NewRequest(http.MethodGet, apiBase+path, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+jwtToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("get installation: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Account struct {
+			Login string `json:"login"`
+		} `json:"account"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode installation: %w", err)
+	}
+
+	c.mu.Lock()
+	c.installOrg = result.Account.Login
+	c.mu.Unlock()
+
+	return result.Account.Login, nil
 }
 
 // --- HTTP helpers ---

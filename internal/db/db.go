@@ -172,6 +172,33 @@ func (s *Store) DeleteMappingBySlackUserID(slackUserID string) error {
 	return err
 }
 
+// ListAllMappings returns all user mappings (without tokens).
+// ListAllMappings returns all user mappings (without tokens).
+func (s *Store) ListAllMappings() ([]UserMappingSummary, error) {
+	rows, err := s.db.Query(`SELECT github_username, slack_user_id, created_at FROM user_mappings ORDER BY github_username`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var mappings []UserMappingSummary
+	for rows.Next() {
+		var m UserMappingSummary
+		if err := rows.Scan(&m.GitHubUsername, &m.SlackUserID, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		mappings = append(mappings, m)
+	}
+	return mappings, rows.Err()
+}
+
+// UserMappingSummary holds non-sensitive fields for display.
+type UserMappingSummary struct {
+	GitHubUsername string
+	SlackUserID    string
+	CreatedAt      string
+}
+
 // --- OAuth States ---
 
 // SaveOAuthState stores a state token associated with a Slack user ID.

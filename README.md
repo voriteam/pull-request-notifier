@@ -6,13 +6,16 @@ An open source Go service that delivers GitHub pull request activity as Slack DM
 
 ## Features
 
-- **Review requested** → DMs the reviewer with PR details. Message is edited in-place when the PR merges or closes.
+- **Review requested** → DMs the reviewer with PR details (file count, diff stats). Message updates in-place when the PR merges or closes.
+- **Live activity** → Review-requested DMs update in real time with approval status and comment counts as activity happens.
 - **Review submitted** (approved / changes requested) → DMs the PR author.
 - **PR comments & @-mentions** → DMs the relevant recipients with the comment body.
 - **Reply from Slack** → Opens a modal; submits to GitHub as a comment (threaded for inline review comments).
 - **React from Slack** → 👍 👀 🎉 quick buttons + 👎 😄 😕 ❤️ 🚀 overflow menu → posts a GitHub reaction.
 - **CI check failures** → DMs when a check run fails on a PR branch, with check name, repo, and branch.
+- **Display names** → Shows full names (fetched from GitHub profiles) instead of usernames, with a 4-hour cache.
 - **Self-service account linking** → `/link-github` slash command initiates GitHub OAuth; no manual mapping needed.
+- **Admin dashboard** → GitHub OAuth-protected page at `/admin` showing all linked accounts.
 
 ## Architecture
 
@@ -24,6 +27,7 @@ Slack slash cmd ──► POST /slack/commands
 Slack interactivity ──► POST /slack/interactions
 GitHub OAuth ──► GET /oauth/github
                GET /oauth/github/callback
+Admin dashboard ──► GET /admin
 Health check ──► GET /healthz
 ```
 
@@ -44,6 +48,9 @@ Required environment variables:
 | `GITHUB_CLIENT_ID` | GitHub OAuth App client ID |
 | `GITHUB_CLIENT_SECRET` | GitHub OAuth App client secret |
 | `GITHUB_WEBHOOK_SECRET` | Secret configured on your GitHub webhook |
+| `GITHUB_APP_ID` | GitHub App ID |
+| `GITHUB_PRIVATE_KEY` | GitHub App private key (PEM format; literal `\n` is supported) |
+| `GITHUB_INSTALLATION_ID` | GitHub App installation ID |
 | `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-...`) |
 | `SLACK_SIGNING_SECRET` | Slack app signing secret |
 | `DB_PATH` | SQLite file path (default: `/data/pr-notifier.db`) |
@@ -88,6 +95,8 @@ Create a GitHub App at **Settings → Developer settings → GitHub Apps → New
   - Issues: Read-only (required for PR comment notifications)
   - Contents: Read-only
   - Checks: Read-only (for CI failure notifications)
+- **Organization permissions**:
+  - Members: Read-only (for admin dashboard access control)
 - **Account permissions**:
   - Email addresses: Read-only
 
@@ -98,9 +107,9 @@ Create a GitHub App at **Settings → Developer settings → GitHub Apps → New
 - Issue comment
 - Check run
 
-After creating the app, note the **Client ID** and generate a **Client secret** — these become `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`.
+After creating the app, note the **App ID**, **Client ID**, and generate a **Client secret** — these become `GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, and `GITHUB_CLIENT_SECRET`. Generate a private key and save it — this becomes `GITHUB_PRIVATE_KEY`.
 
-Install the app on your organization. Webhooks are delivered automatically for all repos the app has access to — no per-repo configuration needed.
+Install the app on your organization and note the **Installation ID** (visible in the URL) — this becomes `GITHUB_INSTALLATION_ID`. Webhooks are delivered automatically for all repos the app has access to — no per-repo configuration needed.
 
 ### 2. Slack App
 
