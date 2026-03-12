@@ -42,7 +42,10 @@ func Init(ctx context.Context, serviceName, version string) func(context.Context
 		return func(context.Context) error { return nil }
 	}
 	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(traceExporter),
+		sdktrace.WithBatcher(traceExporter,
+			sdktrace.WithMaxQueueSize(256),
+			sdktrace.WithMaxExportBatchSize(128),
+		),
 		sdktrace.WithResource(res),
 	)
 	otel.SetTracerProvider(tp)
@@ -56,7 +59,9 @@ func Init(ctx context.Context, serviceName, version string) func(context.Context
 		return tp.Shutdown
 	}
 	lp := sdklog.NewLoggerProvider(
-		sdklog.WithProcessor(sdklog.NewBatchProcessor(logExporter)),
+		sdklog.WithProcessor(sdklog.NewBatchProcessor(logExporter,
+			sdklog.WithMaxQueueSize(256),
+		)),
 		sdklog.WithResource(res),
 	)
 
