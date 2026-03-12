@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: {{ .Release.Name }}
   labels:
-    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/name: {{ include "pull-request-notifier.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   replicas: {{ .Values.replicaCount }}
@@ -11,19 +11,19 @@ spec:
     type: Recreate
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/name: {{ include "pull-request-notifier.name" . }}
       app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: {{ .Chart.Name }}
+        app.kubernetes.io/name: {{ include "pull-request-notifier.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
       serviceAccountName: {{ include "pull-request-notifier.serviceAccountName" . }}
       securityContext:
         fsGroup: 100
       containers:
-        - name: {{ .Chart.Name }}
+        - name: {{ include "pull-request-notifier.containerName" . }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:

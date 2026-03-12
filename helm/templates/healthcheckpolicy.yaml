@@ -3,7 +3,7 @@ kind: HealthCheckPolicy
 metadata:
   name: {{ .Release.Name }}
   labels:
-    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/name: {{ include "pull-request-notifier.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   default:

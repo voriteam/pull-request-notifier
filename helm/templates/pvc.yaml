@@ -4,7 +4,7 @@ kind: PersistentVolumeClaim
 metadata:
   name: {{ .Release.Name }}-data
   labels:
-    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/name: {{ include "pull-request-notifier.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
 spec:
   accessModes:
