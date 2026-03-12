@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"time"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
@@ -44,7 +45,8 @@ func Init(ctx context.Context, serviceName, version string) func(context.Context
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(traceExporter,
 			sdktrace.WithMaxQueueSize(256),
-			sdktrace.WithMaxExportBatchSize(128),
+			sdktrace.WithMaxExportBatchSize(64),
+			sdktrace.WithBatchTimeout(1*time.Second),
 		),
 		sdktrace.WithResource(res),
 	)
@@ -61,6 +63,8 @@ func Init(ctx context.Context, serviceName, version string) func(context.Context
 	lp := sdklog.NewLoggerProvider(
 		sdklog.WithProcessor(sdklog.NewBatchProcessor(logExporter,
 			sdklog.WithMaxQueueSize(256),
+			sdklog.WithExportMaxBatchSize(64),
+			sdklog.WithExportInterval(1*time.Second),
 		)),
 		sdklog.WithResource(res),
 	)
