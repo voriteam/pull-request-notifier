@@ -24,18 +24,11 @@ func Init(ctx context.Context, serviceName, version string) func(context.Context
 		return func(context.Context) error { return nil }
 	}
 
-	res, err := resource.Merge(
-		resource.Default(),
-		resource.NewWithAttributes(
-			semconv.SchemaURL,
-			semconv.ServiceName(serviceName),
-			semconv.ServiceVersion(version),
-		),
+	res := resource.NewWithAttributes(
+		semconv.SchemaURL,
+		semconv.ServiceName(serviceName),
+		semconv.ServiceVersion(version),
 	)
-	if err != nil {
-		slog.Error("failed to create otel resource", "err", err)
-		return func(context.Context) error { return nil }
-	}
 
 	// Traces
 	traceExporter, err := otlptracehttp.New(ctx)
