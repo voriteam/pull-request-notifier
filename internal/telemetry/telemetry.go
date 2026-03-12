@@ -24,6 +24,11 @@ func Init(ctx context.Context, serviceName, version string) func(context.Context
 		return func(context.Context) error { return nil }
 	}
 
+	// Surface OTel SDK errors (e.g. export failures) via slog instead of Go's log package.
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {
+		slog.Error("otel.sdk.error", "err", err)
+	}))
+
 	res := resource.NewWithAttributes(
 		semconv.SchemaURL,
 		semconv.ServiceName(serviceName),

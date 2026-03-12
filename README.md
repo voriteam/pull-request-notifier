@@ -144,7 +144,9 @@ Tracing and log export are optional. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable
 |---|---|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector endpoint (e.g. `http://otel-collector:4318`) |
 
-Standard OTel env vars (`OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_HEADERS`) are also supported.
+Standard OTel env vars (`OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_HEADERS`) are also supported. SDK-level export errors are surfaced as structured `otel.sdk.error` log entries.
+
+In Helm, `OTEL_SERVICE_NAME` defaults to the `app.kubernetes.io/name` pod label. Override with `otel.serviceName` or `nameOverride`.
 
 Helm:
 ```bash
