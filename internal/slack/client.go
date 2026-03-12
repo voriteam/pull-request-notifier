@@ -2,11 +2,19 @@ package slack
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+var tracer = otel.Tracer("pull-request-notifier/slack")
 
 const slackAPIBase = "https://slack.com/api"
 
@@ -23,9 +31,9 @@ func NewClient(token string) *Client {
 
 // PostDM sends a DM to a Slack user by opening/reusing a conversation.
 // Returns the message timestamp (ts) on success.
-func (c *Client) PostDM(userID string, blocks []Block, fallbackText string) (string, error) {
+func (c *Client) PostDM(ctx context.Context, userID string, blocks []Block, fallbackText string) (string, error) {
 	// Open a DM channel with the user.
-	channelID, err := c.openConversation(userID)
+	channelID, err := c.openConversation(ctx, userID)
 	if err != nil {
 		return "", fmt.Errorf("open conversation: %w", err)
 	}
@@ -41,7 +49,7 @@ func (c *Client) PostDM(userID string, blocks []Block, fallbackText string) (str
 		Error string `json:"error"`
 		TS    string `json:"ts"`
 	}
-	if err := c.post("chat.postMessage", payload, &result); err != nil {
+	if err := c.post(ctx, "chat.postMessage", payload, &result); err != nil {
 		return "", err
 	}
 	if !result.OK {
@@ -51,17 +59,17 @@ func (c *Client) PostDM(userID string, blocks []Block, fallbackText string) (str
 }
 
 // UpdateDM edits an existing DM message by opening the conversation first.
-func (c *Client) UpdateDM(userID, ts string, blocks []Block, fallbackText string) error {
-	channelID, err := c.openConversation(userID)
+func (c *Client) UpdateDM(ctx context.Context, userID, ts string, blocks []Block, fallbackText string) error {
+	channelID, err := c.openConversation(ctx, userID)
 	if err != nil {
 		return fmt.Errorf("open conversation: %w", err)
 	}
-	return c.UpdateMessage(channelID, ts, blocks, fallbackText)
+	return c.UpdateMessage(ctx, channelID, ts, blocks, fallbackText)
 }
 
 
 // UpdateMessage edits an existing Slack message in-place.
-func (c *Client) UpdateMessage(channel, ts string, blocks []Block, fallbackText string) error {
+func (c *Client) UpdateMessage(ctx context.Context, channel, ts string, blocks []Block, fallbackText string) error {
 	payload := map[string]any{
 		"channel": channel,
 		"ts":      ts,
@@ -73,7 +81,7 @@ func (c *Client) UpdateMessage(channel, ts string, blocks []Block, fallbackText 
 		OK    bool   `json:"ok"`
 		Error string `json:"error"`
 	}
-	if err := c.post("chat.update", payload, &result); err != nil {
+	if err := c.post(ctx, "chat.update", payload, &result); err != nil {
 		return err
 	}
 	if !result.OK {
@@ -83,7 +91,7 @@ func (c *Client) UpdateMessage(channel, ts string, blocks []Block, fallbackText 
 }
 
 // OpenModal opens a Slack modal using the views.open API.
-func (c *Client) OpenModal(triggerID string, view map[string]any) error {
+func (c *Client) OpenModal(ctx context.Context, triggerID string, view map[string]any) error {
 	payload := map[string]any{
 		"trigger_id": triggerID,
 		"view":       view,
@@ -93,7 +101,7 @@ func (c *Client) OpenModal(triggerID string, view map[string]any) error {
 		OK    bool   `json:"ok"`
 		Error string `json:"error"`
 	}
-	if err := c.post("views.open", payload, &result); err != nil {
+	if err := c.post(ctx, "views.open", payload, &result); err != nil {
 		return err
 	}
 	if !result.OK {
@@ -103,7 +111,7 @@ func (c *Client) OpenModal(triggerID string, view map[string]any) error {
 }
 
 // openConversation opens (or retrieves) a DM channel with a user.
-func (c *Client) openConversation(userID string) (string, error) {
+func (c *Client) openConversation(ctx context.Context, userID string) (string, error) {
 	payload := map[string]any{
 		"users": userID,
 	}
@@ -115,7 +123,7 @@ func (c *Client) openConversation(userID string) (string, error) {
 			ID string `json:"id"`
 		} `json:"channel"`
 	}
-	if err := c.post("conversations.open", payload, &result); err != nil {
+	if err := c.post(ctx, "conversations.open", payload, &result); err != nil {
 		return "", err
 	}
 	if !result.OK {
@@ -124,14 +132,23 @@ func (c *Client) openConversation(userID string) (string, error) {
 	return result.Channel.ID, nil
 }
 
-func (c *Client) post(method string, body any, out any) error {
+func (c *Client) post(ctx context.Context, method string, body any, out any) error {
+	ctx, span := tracer.Start(ctx, "slack."+method, trace.WithAttributes(
+		attribute.String("slack.api.method", method),
+	))
+	defer span.End()
+
 	b, err := json.Marshal(body)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, slackAPIBase+"/"+method, bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, slackAPIBase+"/"+method, bytes.NewReader(b))
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
@@ -139,13 +156,18 @@ func (c *Client) post(method string, body any, out any) error {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("slack %s: %w", method, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("slack %s: status %d: %s", method, resp.StatusCode, string(respBody))
+		err := fmt.Errorf("slack %s: status %d: %s", method, resp.StatusCode, string(respBody))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }

@@ -1,6 +1,7 @@
 package slack
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -191,7 +192,7 @@ func (h *Handler) handleReplyButton(triggerID, blockID string) {
 		return
 	}
 	modal := ReplyModal(ctx)
-	if err := h.slack.OpenModal(triggerID, modal); err != nil {
+	if err := h.slack.OpenModal(context.Background(), triggerID, modal); err != nil {
 		slog.Error("open reply modal", "err", err)
 	}
 }
@@ -209,7 +210,7 @@ func (h *Handler) handleReaction(slackUserID, blockID, reaction string) {
 		return
 	}
 
-	if err := h.github.AddReaction(mapping.GitHubToken, ctx.Repo, ctx.CommentID, ctx.CommentType, reaction); err != nil {
+	if err := h.github.AddReaction(context.Background(), mapping.GitHubToken, ctx.Repo, ctx.CommentID, ctx.CommentType, reaction); err != nil {
 		slog.Error("add github reaction", "err", err)
 	}
 }
@@ -250,7 +251,7 @@ func (h *Handler) handleViewSubmission(w http.ResponseWriter, payload *interacti
 	w.WriteHeader(http.StatusOK) // Close the modal immediately.
 
 	go func() {
-		if err := h.github.PostReply(mapping.GitHubToken, ctx.Repo, ctx.PRNumber, ctx.CommentID, ctx.CommentType, replyText); err != nil {
+		if err := h.github.PostReply(context.Background(), mapping.GitHubToken, ctx.Repo, ctx.PRNumber, ctx.CommentID, ctx.CommentType, replyText); err != nil {
 			slog.Error("post github reply", "err", err)
 		}
 	}()

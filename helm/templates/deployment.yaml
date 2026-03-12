@@ -78,6 +78,18 @@ spec:
                 secretKeyRef:
                   name: {{ $secretName }}
                   key: SLACK_SIGNING_SECRET
+            {{- if .Values.otel.enabled }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.otel.endpoint | quote }}
+            - name: OTEL_SERVICE_NAME
+              {{- if .Values.otel.serviceName }}
+              value: {{ .Values.otel.serviceName | quote }}
+              {{- else }}
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['app.kubernetes.io/name']
+              {{- end }}
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz

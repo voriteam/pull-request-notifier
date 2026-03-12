@@ -1,6 +1,7 @@
 package notifier
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,10 +12,16 @@ import (
 	"net/http"
 	"strings"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/voriteam/pull-request-notifier/internal/db"
 	"github.com/voriteam/pull-request-notifier/internal/github"
 	"github.com/voriteam/pull-request-notifier/internal/slack"
 )
+
+var tracer = otel.Tracer("pull-request-notifier/notifier")
 
 // Handler processes GitHub webhook events and sends Slack DMs.
 type Handler struct {
@@ -59,18 +66,25 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusOK)
 
+	ctx, span := tracer.Start(context.Background(), "webhook."+event, trace.WithAttributes(
+		attribute.String("github.event", event),
+		attribute.String("github.delivery_id", deliveryID),
+		attribute.String("github.payload", string(body)),
+	))
+
 	go func() {
+		defer span.End()
 		switch event {
 		case "pull_request":
-			h.handlePullRequest(body)
+			h.handlePullRequest(ctx, body)
 		case "pull_request_review":
-			h.handlePullRequestReview(body)
+			h.handlePullRequestReview(ctx, body)
 		case "pull_request_review_comment":
-			h.handlePullRequestReviewComment(body)
+			h.handlePullRequestReviewComment(ctx, body)
 		case "issue_comment":
-			h.handleIssueComment(body)
+			h.handleIssueComment(ctx, body)
 		case "check_run":
-			h.handleCheckRun(body)
+			h.handleCheckRun(ctx, body)
 		}
 	}()
 }
@@ -193,12 +207,19 @@ type ghRepo struct {
 
 // --- Event handlers ---
 
-func (h *Handler) handlePullRequest(body []byte) {
+func (h *Handler) handlePullRequest(ctx context.Context, body []byte) {
 	var evt pullRequestEvent
 	if err := json.Unmarshal(body, &evt); err != nil {
 		slog.Error("parse pull_request event", "err", err)
 		return
 	}
+
+	ctx, span := tracer.Start(ctx, "handlePullRequest", trace.WithAttributes(
+		attribute.String("github.repository", evt.Repository.FullName),
+		attribute.Int("github.pr.number", evt.PullRequest.Number),
+		attribute.String("github.action", evt.Action),
+	))
+	defer span.End()
 
 	// Track the PR author on any pull_request event so we can notify them on check failures.
 	if err := h.store.SavePRAuthor(evt.Repository.FullName, evt.PullRequest.Number, evt.PullRequest.User.Login); err != nil {
@@ -207,13 +228,13 @@ func (h *Handler) handlePullRequest(body []byte) {
 
 	switch evt.Action {
 	case "review_requested":
-		h.handleReviewRequested(&evt)
+		h.handleReviewRequested(ctx, &evt)
 	case "closed":
-		h.handlePRClosed(&evt)
+		h.handlePRClosed(ctx, &evt)
 	}
 }
 
-func (h *Handler) handleReviewRequested(evt *pullRequestEvent) {
+func (h *Handler) handleReviewRequested(ctx context.Context, evt *pullRequestEvent) {
 	if evt.RequestedReviewer == nil {
 		return
 	}
@@ -235,9 +256,9 @@ func (h *Handler) handleReviewRequested(evt *pullRequestEvent) {
 		status = "draft"
 	}
 
-	authorName := h.github.GetUserDisplayName(pr.User.Login)
+	authorName := h.github.GetUserDisplayName(ctx, pr.User.Login)
 
-	activity, err := h.github.GetPRActivity(evt.Repository.FullName, pr.Number)
+	activity, err := h.github.GetPRActivity(ctx, evt.Repository.FullName, pr.Number)
 	if err != nil {
 		slog.Error("fetch pr activity", "err", err)
 	}
@@ -248,7 +269,7 @@ func (h *Handler) handleReviewRequested(evt *pullRequestEvent) {
 	)
 	fallback := fmt.Sprintf("%s requested your review on %s", authorName, pr.Title)
 
-	ts, err := h.slack.PostDM(slackUserID, blocks, fallback)
+	ts, err := h.slack.PostDM(ctx, slackUserID, blocks, fallback)
 	if err != nil {
 		slog.Error("send review requested DM", "slack_user_id", slackUserID, "err", err)
 		return
@@ -268,7 +289,7 @@ func (h *Handler) handleReviewRequested(evt *pullRequestEvent) {
 	}
 }
 
-func (h *Handler) handlePRClosed(evt *pullRequestEvent) {
+func (h *Handler) handlePRClosed(ctx context.Context, evt *pullRequestEvent) {
 	pr := evt.PullRequest
 	repo := evt.Repository.FullName
 
@@ -278,7 +299,7 @@ func (h *Handler) handlePRClosed(evt *pullRequestEvent) {
 		return
 	}
 
-	activity, err := h.github.GetPRActivity(repo, pr.Number)
+	activity, err := h.github.GetPRActivity(ctx, repo, pr.Number)
 	if err != nil {
 		slog.Error("fetch pr activity for close", "err", err)
 	}
@@ -302,13 +323,13 @@ func (h *Handler) handlePRClosed(evt *pullRequestEvent) {
 		}
 
 		// Slack DMs use the user ID as the channel for chat.update.
-		if err := h.slack.UpdateDM(msg.SlackUserID, msg.MessageTS, blocks, fallback); err != nil {
+		if err := h.slack.UpdateDM(ctx, msg.SlackUserID, msg.MessageTS, blocks, fallback); err != nil {
 			slog.Error("update pr message on close", "slack_user_id", msg.SlackUserID, "err", err)
 		}
 	}
 }
 
-func (h *Handler) handlePullRequestReview(body []byte) {
+func (h *Handler) handlePullRequestReview(ctx context.Context, body []byte) {
 	var evt pullRequestReviewEvent
 	if err := json.Unmarshal(body, &evt); err != nil {
 		slog.Error("parse pull_request_review event", "err", err)
@@ -320,7 +341,7 @@ func (h *Handler) handlePullRequestReview(body []byte) {
 	}
 
 	// Refresh all existing review-requested DMs for this PR with updated activity.
-	h.refreshPRMessages(evt.Repository.FullName, evt.PullRequest)
+	h.refreshPRMessages(ctx, evt.Repository.FullName, evt.PullRequest)
 
 	// Only notify on approved, changes_requested, or commented (with body).
 	state := evt.Review.State
@@ -346,16 +367,16 @@ func (h *Handler) handlePullRequestReview(body []byte) {
 	}
 
 	pr := evt.PullRequest
-	reviewerName := h.github.GetUserDisplayName(reviewer)
+	reviewerName := h.github.GetUserDisplayName(ctx, reviewer)
 	blocks := slack.ReviewSubmittedBlocks(reviewerName, pr.Title, pr.HTMLURL, state, evt.Review.Body)
 	fallback := fmt.Sprintf("%s reviewed %s", reviewerName, pr.Title)
 
-	if _, err := h.slack.PostDM(slackUserID, blocks, fallback); err != nil {
+	if _, err := h.slack.PostDM(ctx, slackUserID, blocks, fallback); err != nil {
 		slog.Error("send review submitted DM", "err", err)
 	}
 }
 
-func (h *Handler) handlePullRequestReviewComment(body []byte) {
+func (h *Handler) handlePullRequestReviewComment(ctx context.Context, body []byte) {
 	var evt pullRequestReviewCommentEvent
 	if err := json.Unmarshal(body, &evt); err != nil {
 		slog.Error("parse pull_request_review_comment event", "err", err)
@@ -370,7 +391,7 @@ func (h *Handler) handlePullRequestReviewComment(body []byte) {
 	repo := evt.Repository.FullName
 
 	// Refresh all existing review-requested DMs for this PR with updated activity.
-	h.refreshPRMessages(repo, pr)
+	h.refreshPRMessages(ctx, repo, pr)
 
 	// Don't notify the commenter about their own comment.
 	prAuthor := pr.User.Login
@@ -384,18 +405,18 @@ func (h *Handler) handlePullRequestReviewComment(body []byte) {
 		return
 	}
 
-	ctx := slack.CommentContext{
+	commentCtx := slack.CommentContext{
 		Repo:        repo,
 		PRNumber:    pr.Number,
 		CommentID:   evt.Comment.ID,
 		CommentType: "review_comment",
 	}
 
-	commenterName := h.github.GetUserDisplayName(commenter)
-	blocks := slack.CommentBlocks(commenterName, pr.Title, pr.HTMLURL, evt.Comment.Body, ctx)
+	commenterName := h.github.GetUserDisplayName(ctx, commenter)
+	blocks := slack.CommentBlocks(commenterName, pr.Title, pr.HTMLURL, evt.Comment.Body, commentCtx)
 	fallback := fmt.Sprintf("%s commented on %s", commenterName, pr.Title)
 
-	ts, err := h.slack.PostDM(slackUserID, blocks, fallback)
+	ts, err := h.slack.PostDM(ctx, slackUserID, blocks, fallback)
 	if err != nil {
 		slog.Error("send review comment DM", "err", err)
 		return
@@ -406,7 +427,7 @@ func (h *Handler) handlePullRequestReviewComment(body []byte) {
 	}
 }
 
-func (h *Handler) handleIssueComment(body []byte) {
+func (h *Handler) handleIssueComment(ctx context.Context, body []byte) {
 	var evt issueCommentEvent
 	if err := json.Unmarshal(body, &evt); err != nil {
 		slog.Error("parse issue_comment event", "err", err)
@@ -425,7 +446,7 @@ func (h *Handler) handleIssueComment(body []byte) {
 	repo := evt.Repository.FullName
 
 	// Refresh all existing review-requested DMs for this PR with updated activity.
-	h.refreshPRMessages(repo, pullRequest{
+	h.refreshPRMessages(ctx, repo, pullRequest{
 		Number:  evt.Issue.Number,
 		Title:   evt.Issue.Title,
 		HTMLURL: evt.Issue.HTMLURL,
@@ -444,18 +465,18 @@ func (h *Handler) handleIssueComment(body []byte) {
 		return
 	}
 
-	ctx := slack.CommentContext{
+	commentCtx := slack.CommentContext{
 		Repo:        repo,
 		PRNumber:    evt.Issue.Number,
 		CommentID:   evt.Comment.ID,
 		CommentType: "pr_comment",
 	}
 
-	commenterName := h.github.GetUserDisplayName(commenter)
-	blocks := slack.CommentBlocks(commenterName, evt.Issue.Title, evt.Issue.HTMLURL, evt.Comment.Body, ctx)
+	commenterName := h.github.GetUserDisplayName(ctx, commenter)
+	blocks := slack.CommentBlocks(commenterName, evt.Issue.Title, evt.Issue.HTMLURL, evt.Comment.Body, commentCtx)
 	fallback := fmt.Sprintf("%s commented on %s", commenterName, evt.Issue.Title)
 
-	ts, err := h.slack.PostDM(slackUserID, blocks, fallback)
+	ts, err := h.slack.PostDM(ctx, slackUserID, blocks, fallback)
 	if err != nil {
 		slog.Error("send issue comment DM", "err", err)
 		return
@@ -466,7 +487,7 @@ func (h *Handler) handleIssueComment(body []byte) {
 	}
 }
 
-func (h *Handler) handleCheckRun(body []byte) {
+func (h *Handler) handleCheckRun(ctx context.Context, body []byte) {
 	var evt checkRunEvent
 	if err := json.Unmarshal(body, &evt); err != nil {
 		slog.Error("check_run.parse_failed", "err", err)
@@ -475,7 +496,7 @@ func (h *Handler) handleCheckRun(body []byte) {
 
 	repo := evt.Repository.FullName
 	log := slog.With(
-		"github.repo", repo,
+		"github.repository", repo,
 		"github.check_name", evt.CheckRun.Name,
 		"github.action", evt.Action,
 		"github.conclusion", evt.CheckRun.Conclusion,
@@ -525,7 +546,7 @@ func (h *Handler) handleCheckRun(body []byte) {
 		)
 		fallback := fmt.Sprintf("Check %s failed", evt.CheckRun.Name)
 
-		if _, err := h.slack.PostDM(slackUserID, blocks, fallback); err != nil {
+		if _, err := h.slack.PostDM(ctx, slackUserID, blocks, fallback); err != nil {
 			prLog.Error("check_run.send_dm_failed", "slack.user_id", slackUserID, "err", err)
 		} else {
 			prLog.Info("check_run.notified", "github.author", author, "slack.user_id", slackUserID)
@@ -534,7 +555,7 @@ func (h *Handler) handleCheckRun(body []byte) {
 }
 
 // refreshPRMessages updates all existing review-requested DMs for a PR with current activity.
-func (h *Handler) refreshPRMessages(repo string, pr pullRequest) {
+func (h *Handler) refreshPRMessages(ctx context.Context, repo string, pr pullRequest) {
 	msgs, err := h.store.GetPRMessages(repo, pr.Number)
 	if err != nil {
 		slog.Error("get pr messages for refresh", "err", err)
@@ -544,7 +565,7 @@ func (h *Handler) refreshPRMessages(repo string, pr pullRequest) {
 		return
 	}
 
-	activity, err := h.github.GetPRActivity(repo, pr.Number)
+	activity, err := h.github.GetPRActivity(ctx, repo, pr.Number)
 	if err != nil {
 		slog.Error("fetch pr activity for refresh", "err", err)
 		return
@@ -561,7 +582,7 @@ func (h *Handler) refreshPRMessages(repo string, pr pullRequest) {
 		)
 		fallback := fmt.Sprintf("%s requested your review on %s", msg.Author, msg.Title)
 
-		if err := h.slack.UpdateDM(msg.SlackUserID, msg.MessageTS, blocks, fallback); err != nil {
+		if err := h.slack.UpdateDM(ctx, msg.SlackUserID, msg.MessageTS, blocks, fallback); err != nil {
 			slog.Error("update pr message with activity", "slack_user_id", msg.SlackUserID, "err", err)
 		}
 	}

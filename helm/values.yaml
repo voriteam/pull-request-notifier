@@ -42,6 +42,11 @@ serviceAccount:
   create: true
   name: ""
 
+otel:
+  enabled: false
+  endpoint: ""
+  serviceName: ""
+
 resources:
   requests:
     cpu: 50m

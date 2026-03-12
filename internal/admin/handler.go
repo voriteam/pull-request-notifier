@@ -89,21 +89,21 @@ func (h *Handler) HandleLinkedAccounts(w http.ResponseWriter, r *http.Request) {
 // CompleteLogin is called from the shared OAuth callback when the state is "admin".
 // It exchanges the code, verifies org membership, sets a session cookie, and redirects.
 func (h *Handler) CompleteLogin(w http.ResponseWriter, r *http.Request, code string) {
-	token, err := h.github.ExchangeCode(h.clientID, h.clientSecret, code)
+	token, err := h.github.ExchangeCode(r.Context(), h.clientID, h.clientSecret, code)
 	if err != nil {
 		slog.Error("admin oauth exchange", "err", err)
 		http.Error(w, "GitHub authorization failed", http.StatusInternalServerError)
 		return
 	}
 
-	username, err := h.github.GetAuthenticatedUser(token)
+	username, err := h.github.GetAuthenticatedUser(r.Context(), token)
 	if err != nil {
 		slog.Error("admin get user", "err", err)
 		http.Error(w, "Failed to fetch GitHub user", http.StatusInternalServerError)
 		return
 	}
 
-	isMember, err := h.github.IsOrgMember(username)
+	isMember, err := h.github.IsOrgMember(r.Context(), username)
 	if err != nil {
 		slog.Error("admin check org membership", "err", err)
 		http.Error(w, "Failed to verify organization membership", http.StatusInternalServerError)

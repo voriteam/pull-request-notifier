@@ -136,6 +136,23 @@ Requires `gcc` for SQLite (CGO). On macOS: `xcode-select --install`. On Ubuntu/D
 
 All state lives in a single SQLite file. The data is low-stakes (only account mappings and message timestamps for in-place edits — no message content). For production, mount the `/data` volume on persistent storage. If you want continuous replication, [Litestream](https://litestream.io) works well as a sidecar.
 
+## Observability
+
+Tracing and log export are optional. Set `OTEL_EXPORTER_OTLP_ENDPOINT` to enable OpenTelemetry trace and log export via OTLP HTTP.
+
+| Variable | Description |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector endpoint (e.g. `http://otel-collector:4318`) |
+
+Standard OTel env vars (`OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_HEADERS`) are also supported.
+
+Helm:
+```bash
+helm install pr-notifier ./helm/pull-request-notifier \
+  --set otel.enabled=true \
+  --set otel.endpoint=http://otel-collector:4318
+```
+
 ## License
 
 MIT

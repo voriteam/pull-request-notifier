@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,11 +14,19 @@ import (
 	"github.com/voriteam/pull-request-notifier/internal/notifier"
 	"github.com/voriteam/pull-request-notifier/internal/oauth"
 	"github.com/voriteam/pull-request-notifier/internal/slack"
+	"github.com/voriteam/pull-request-notifier/internal/telemetry"
 )
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	slog.Info("starting", "version", os.Getenv("VERSION"))
+
+	serviceName := os.Getenv("OTEL_SERVICE_NAME")
+	if serviceName == "" {
+		serviceName = "pull-request-notifier"
+	}
+	shutdown := telemetry.Init(context.Background(), serviceName, os.Getenv("VERSION"))
+	defer shutdown(context.Background())
 
 	cfg := config.Load()
 

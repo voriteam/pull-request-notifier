@@ -79,7 +79,7 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Exchange code for token.
-	token, err := h.github.ExchangeCode(h.clientID, h.clientSecret, code)
+	token, err := h.github.ExchangeCode(r.Context(), h.clientID, h.clientSecret, code)
 	if err != nil {
 		slog.Error("exchange github code", "err", err)
 		http.Error(w, "Failed to complete GitHub authorization.", http.StatusInternalServerError)
@@ -87,7 +87,7 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch the GitHub username.
-	username, err := h.github.GetAuthenticatedUser(token)
+	username, err := h.github.GetAuthenticatedUser(r.Context(), token)
 	if err != nil {
 		slog.Error("get github user", "err", err)
 		http.Error(w, "Failed to fetch GitHub user info.", http.StatusInternalServerError)
@@ -104,7 +104,7 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 	slog.Info("linked github account", "github_username", username, "slack_user_id", slackUserID)
 
 	// DM the user to confirm.
-	_, _ = h.slack.PostDM(slackUserID,
+	_, _ = h.slack.PostDM(r.Context(), slackUserID,
 		[]slack.Block{
 			{"type": "section", "text": map[string]string{
 				"type": "mrkdwn",

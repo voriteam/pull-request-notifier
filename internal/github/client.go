@@ -2,6 +2,7 @@ package github
 
 import (
 	"bytes"
+	"context"
 	"crypto/rsa"
 	"encoding/json"
 	"fmt"
@@ -14,7 +15,13 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
+
+var tracer = otel.Tracer("pull-request-notifier/github")
 
 const apiBase = "https://api.github.com"
 
@@ -124,7 +131,7 @@ func (c *Client) GetInstallationToken() (string, error) {
 
 // GetUserDisplayName returns the full name for a GitHub login, falling back to the login itself.
 // Results are cached for 4 hours.
-func (c *Client) GetUserDisplayName(login string) string {
+func (c *Client) GetUserDisplayName(ctx context.Context, login string) string {
 	c.nameMu.RLock()
 	if cached, ok := c.nameCache[login]; ok && time.Now().Before(cached.expiresAt) {
 		c.nameMu.RUnlock()
@@ -138,7 +145,7 @@ func (c *Client) GetUserDisplayName(login string) string {
 		var user struct {
 			Name string `json:"name"`
 		}
-		if err := c.get(token, "/users/"+login, &user); err == nil && user.Name != "" {
+		if err := c.get(ctx, token, "/users/"+login, &user); err == nil && user.Name != "" {
 			name = user.Name
 		}
 	}
@@ -158,7 +165,7 @@ type PRActivity struct {
 }
 
 // GetPRActivity fetches reviews and comments for a PR using an installation token.
-func (c *Client) GetPRActivity(repo string, prNumber int) (*PRActivity, error) {
+func (c *Client) GetPRActivity(ctx context.Context, repo string, prNumber int) (*PRActivity, error) {
 	token, err := c.GetInstallationToken()
 	if err != nil {
 		return nil, fmt.Errorf("get installation token: %w", err)
@@ -179,7 +186,7 @@ func (c *Client) GetPRActivity(repo string, prNumber int) (*PRActivity, error) {
 		State string                 `json:"state"`
 	}
 	reviewPath := fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews", owner, repoName, prNumber)
-	if err := c.get(token, reviewPath, &reviews); err != nil {
+	if err := c.get(ctx, token, reviewPath, &reviews); err != nil {
 		slog.Error("fetch pr reviews", "err", err)
 	} else {
 		// Track the latest review state per user.
@@ -189,7 +196,7 @@ func (c *Client) GetPRActivity(repo string, prNumber int) (*PRActivity, error) {
 		}
 		for login, state := range latestState {
 			if strings.EqualFold(state, "APPROVED") {
-				activity.Approvals = append(activity.Approvals, c.GetUserDisplayName(login))
+				activity.Approvals = append(activity.Approvals, c.GetUserDisplayName(ctx, login))
 			}
 		}
 	}
@@ -199,11 +206,11 @@ func (c *Client) GetPRActivity(repo string, prNumber int) (*PRActivity, error) {
 	var reviewComments []struct {
 		User struct{ Login string } `json:"user"`
 	}
-	if err := c.get(token, reviewCommentsPath, &reviewComments); err != nil {
+	if err := c.get(ctx, token, reviewCommentsPath, &reviewComments); err != nil {
 		slog.Error("fetch pr review comments", "err", err)
 	} else {
 		for _, rc := range reviewComments {
-			activity.Commenters[c.GetUserDisplayName(rc.User.Login)]++
+			activity.Commenters[c.GetUserDisplayName(ctx, rc.User.Login)]++
 			activity.TotalComments++
 		}
 	}
@@ -213,11 +220,11 @@ func (c *Client) GetPRActivity(repo string, prNumber int) (*PRActivity, error) {
 	var issueComments []struct {
 		User struct{ Login string } `json:"user"`
 	}
-	if err := c.get(token, issueCommentsPath, &issueComments); err != nil {
+	if err := c.get(ctx, token, issueCommentsPath, &issueComments); err != nil {
 		slog.Error("fetch pr issue comments", "err", err)
 	} else {
 		for _, ic := range issueComments {
-			activity.Commenters[c.GetUserDisplayName(ic.User.Login)]++
+			activity.Commenters[c.GetUserDisplayName(ctx, ic.User.Login)]++
 			activity.TotalComments++
 		}
 	}
@@ -226,7 +233,7 @@ func (c *Client) GetPRActivity(repo string, prNumber int) (*PRActivity, error) {
 }
 
 // ExchangeCode exchanges a GitHub OAuth code for a user access token.
-func (c *Client) ExchangeCode(clientID, clientSecret, code string) (string, error) {
+func (c *Client) ExchangeCode(ctx context.Context, clientID, clientSecret, code string) (string, error) {
 	body := map[string]string{
 		"client_id":     clientID,
 		"client_secret": clientSecret,
@@ -234,8 +241,13 @@ func (c *Client) ExchangeCode(clientID, clientSecret, code string) (string, erro
 	}
 	b, _ := json.Marshal(body)
 
-	req, err := http.NewRequest(http.MethodPost, "https://github.com/login/oauth/access_token", bytes.NewReader(b))
+	ctx, span := tracer.Start(ctx, "github.ExchangeCode")
+	defer span.End()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://github.com/login/oauth/access_token", bytes.NewReader(b))
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -243,6 +255,8 @@ func (c *Client) ExchangeCode(clientID, clientSecret, code string) (string, erro
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return "", fmt.Errorf("exchange code: %w", err)
 	}
 	defer resp.Body.Close()
@@ -253,20 +267,25 @@ func (c *Client) ExchangeCode(clientID, clientSecret, code string) (string, erro
 		ErrorDesc   string `json:"error_description"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return "", fmt.Errorf("decode token response: %w", err)
 	}
 	if result.Error != "" {
-		return "", fmt.Errorf("github oauth: %s: %s", result.Error, result.ErrorDesc)
+		err := fmt.Errorf("github oauth: %s: %s", result.Error, result.ErrorDesc)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return "", err
 	}
 	return result.AccessToken, nil
 }
 
 // GetAuthenticatedUser returns the GitHub username for the given token.
-func (c *Client) GetAuthenticatedUser(token string) (string, error) {
+func (c *Client) GetAuthenticatedUser(ctx context.Context, token string) (string, error) {
 	var user struct {
 		Login string `json:"login"`
 	}
-	if err := c.get(token, "/user", &user); err != nil {
+	if err := c.get(ctx, token, "/user", &user); err != nil {
 		return "", err
 	}
 	return user.Login, nil
@@ -275,7 +294,7 @@ func (c *Client) GetAuthenticatedUser(token string) (string, error) {
 // PostReply posts a reply to a GitHub PR comment.
 // For review_comment type, it uses the review comment reply endpoint (threading).
 // For pr_comment and review types, it creates a new top-level issue comment.
-func (c *Client) PostReply(token, repo string, prNumber int, commentID int64, commentType, body string) error {
+func (c *Client) PostReply(ctx context.Context, token, repo string, prNumber int, commentID int64, commentType, body string) error {
 	owner, repoName, err := splitRepo(repo)
 	if err != nil {
 		return err
@@ -287,17 +306,17 @@ func (c *Client) PostReply(token, repo string, prNumber int, commentID int64, co
 	case "review_comment":
 		// Replies to inline code review comments are threaded on GitHub.
 		path := fmt.Sprintf("/repos/%s/%s/pulls/%d/comments/%d/replies", owner, repoName, prNumber, commentID)
-		return c.post(token, path, payload, nil)
+		return c.post(ctx, token, path, payload, nil)
 	default:
 		// pr_comment and review body replies both go as top-level issue comments.
 		path := fmt.Sprintf("/repos/%s/%s/issues/%d/comments", owner, repoName, prNumber)
-		return c.post(token, path, payload, nil)
+		return c.post(ctx, token, path, payload, nil)
 	}
 }
 
 // AddReaction adds a GitHub reaction to a comment.
 // Reaction must be one of: +1, -1, laugh, confused, heart, hooray, rocket, eyes.
-func (c *Client) AddReaction(token, repo string, commentID int64, commentType, reaction string) error {
+func (c *Client) AddReaction(ctx context.Context, token, repo string, commentID int64, commentType, reaction string) error {
 	owner, repoName, err := splitRepo(repo)
 	if err != nil {
 		return err
@@ -308,16 +327,16 @@ func (c *Client) AddReaction(token, repo string, commentID int64, commentType, r
 	switch commentType {
 	case "review_comment":
 		path := fmt.Sprintf("/repos/%s/%s/pulls/comments/%d/reactions", owner, repoName, commentID)
-		return c.post(token, path, payload, nil)
+		return c.post(ctx, token, path, payload, nil)
 	default:
 		// pr_comment (issue_comment)
 		path := fmt.Sprintf("/repos/%s/%s/issues/comments/%d/reactions", owner, repoName, commentID)
-		return c.post(token, path, payload, nil)
+		return c.post(ctx, token, path, payload, nil)
 	}
 }
 
 // IsOrgMember checks whether a GitHub user is a member of the org where the app is installed.
-func (c *Client) IsOrgMember(username string) (bool, error) {
+func (c *Client) IsOrgMember(ctx context.Context, username string) (bool, error) {
 	token, err := c.GetInstallationToken()
 	if err != nil {
 		return false, fmt.Errorf("get installation token: %w", err)
@@ -393,9 +412,17 @@ func (c *Client) getInstallationOrg(token string) (string, error) {
 
 // --- HTTP helpers ---
 
-func (c *Client) get(token, path string, out any) error {
-	req, err := http.NewRequest(http.MethodGet, apiBase+path, nil)
+func (c *Client) get(ctx context.Context, token, path string, out any) error {
+	ctx, span := tracer.Start(ctx, "github.GET", trace.WithAttributes(
+		attribute.String("http.method", "GET"),
+		attribute.String("github.api.path", path),
+	))
+	defer span.End()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBase+path, nil)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -404,25 +431,40 @@ func (c *Client) get(token, path string, out any) error {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("github GET %s: %w", path, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("github GET %s: status %d: %s", path, resp.StatusCode, string(body))
+		err := fmt.Errorf("github GET %s: status %d: %s", path, resp.StatusCode, string(body))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
-func (c *Client) post(token, path string, body, out any) error {
+func (c *Client) post(ctx context.Context, token, path string, body, out any) error {
+	ctx, span := tracer.Start(ctx, "github.POST", trace.WithAttributes(
+		attribute.String("http.method", "POST"),
+		attribute.String("github.api.path", path),
+	))
+	defer span.End()
+
 	b, err := json.Marshal(body)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, apiBase+path, bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiBase+path, bytes.NewReader(b))
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -432,13 +474,18 @@ func (c *Client) post(token, path string, body, out any) error {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("github POST %s: %w", path, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("github POST %s: status %d: %s", path, resp.StatusCode, string(respBody))
+		err := fmt.Errorf("github POST %s: status %d: %s", path, resp.StatusCode, string(respBody))
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
 	}
 	if out != nil {
 		return json.NewDecoder(resp.Body).Decode(out)
