@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,6 +21,9 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
+
+// ErrUnauthorized is returned when GitHub responds with 401 Unauthorized.
+var ErrUnauthorized = errors.New("github: 401 unauthorized")
 
 var tracer = otel.Tracer("pull-request-notifier/github")
 
@@ -232,8 +236,15 @@ func (c *Client) GetPRActivity(ctx context.Context, repo string, prNumber int) (
 	return activity, nil
 }
 
+// OAuthToken holds the tokens returned by GitHub's OAuth token endpoint.
+type OAuthToken struct {
+	AccessToken  string
+	RefreshToken string
+	ExpiresIn    int // seconds until access token expires; 0 if not provided
+}
+
 // ExchangeCode exchanges a GitHub OAuth code for a user access token.
-func (c *Client) ExchangeCode(ctx context.Context, clientID, clientSecret, code string) (string, error) {
+func (c *Client) ExchangeCode(ctx context.Context, clientID, clientSecret, code string) (*OAuthToken, error) {
 	body := map[string]string{
 		"client_id":     clientID,
 		"client_secret": clientSecret,
@@ -248,7 +259,7 @@ func (c *Client) ExchangeCode(ctx context.Context, clientID, clientSecret, code 
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return "", err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -257,27 +268,88 @@ func (c *Client) ExchangeCode(ctx context.Context, clientID, clientSecret, code 
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return "", fmt.Errorf("exchange code: %w", err)
+		return nil, fmt.Errorf("exchange code: %w", err)
 	}
 	defer resp.Body.Close()
 
 	var result struct {
-		AccessToken string `json:"access_token"`
-		Error       string `json:"error"`
-		ErrorDesc   string `json:"error_description"`
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		Error        string `json:"error"`
+		ErrorDesc    string `json:"error_description"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return "", fmt.Errorf("decode token response: %w", err)
+		return nil, fmt.Errorf("decode token response: %w", err)
 	}
 	if result.Error != "" {
 		err := fmt.Errorf("github oauth: %s: %s", result.Error, result.ErrorDesc)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return "", err
+		return nil, err
 	}
-	return result.AccessToken, nil
+	return &OAuthToken{
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+		ExpiresIn:    result.ExpiresIn,
+	}, nil
+}
+
+// RefreshToken exchanges a refresh token for new access and refresh tokens.
+func (c *Client) RefreshToken(ctx context.Context, clientID, clientSecret, refreshToken string) (*OAuthToken, error) {
+	body := map[string]string{
+		"client_id":     clientID,
+		"client_secret": clientSecret,
+		"grant_type":    "refresh_token",
+		"refresh_token": refreshToken,
+	}
+	b, _ := json.Marshal(body)
+
+	ctx, span := tracer.Start(ctx, "github.RefreshToken")
+	defer span.End()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://github.com/login/oauth/access_token", bytes.NewReader(b))
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("refresh token: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		Error        string `json:"error"`
+		ErrorDesc    string `json:"error_description"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, fmt.Errorf("decode refresh response: %w", err)
+	}
+	if result.Error != "" {
+		err := fmt.Errorf("github oauth refresh: %s: %s", result.Error, result.ErrorDesc)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	return &OAuthToken{
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+		ExpiresIn:    result.ExpiresIn,
+	}, nil
 }
 
 // GetAuthenticatedUser returns the GitHub username for the given token.
@@ -485,6 +557,9 @@ func (c *Client) post(ctx context.Context, token, path string, body, out any) er
 		err := fmt.Errorf("github POST %s: status %d: %s", path, resp.StatusCode, string(respBody))
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
+		if resp.StatusCode == 401 {
+			return fmt.Errorf("%w: %s", ErrUnauthorized, string(respBody))
+		}
 		return err
 	}
 	if out != nil {

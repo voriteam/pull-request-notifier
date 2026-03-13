@@ -46,7 +46,7 @@ func main() {
 
 	adminHandler := admin.NewHandler(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.BaseURL, cfg.GitHubWebhookSecret, store, ghClient)
 	oauthHandler := oauth.NewHandler(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.BaseURL, store, ghClient, slackClient, adminHandler)
-	slackHandler := slack.NewHandler(cfg.SlackSigningSecret, store, ghClient, slackClient, cfg.BaseURL)
+	slackHandler := slack.NewHandler(cfg.SlackSigningSecret, store, ghClient, slackClient, cfg.BaseURL, cfg.GitHubClientID, cfg.GitHubClientSecret)
 	webhookHandler := notifier.NewHandler(cfg.GitHubWebhookSecret, store, slackClient, ghClient)
 
 	mux := http.NewServeMux()

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/voriteam/pull-request-notifier/internal/admin"
 	"github.com/voriteam/pull-request-notifier/internal/db"
@@ -79,7 +80,7 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Exchange code for token.
-	token, err := h.github.ExchangeCode(r.Context(), h.clientID, h.clientSecret, code)
+	oauthToken, err := h.github.ExchangeCode(r.Context(), h.clientID, h.clientSecret, code)
 	if err != nil {
 		slog.Error("exchange github code", "err", err)
 		http.Error(w, "Failed to complete GitHub authorization.", http.StatusInternalServerError)
@@ -87,15 +88,22 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch the GitHub username.
-	username, err := h.github.GetAuthenticatedUser(r.Context(), token)
+	username, err := h.github.GetAuthenticatedUser(r.Context(), oauthToken.AccessToken)
 	if err != nil {
 		slog.Error("get github user", "err", err)
 		http.Error(w, "Failed to fetch GitHub user info.", http.StatusInternalServerError)
 		return
 	}
 
+	// Compute token expiry time.
+	var tokenExpiresAt *time.Time
+	if oauthToken.ExpiresIn > 0 {
+		t := time.Now().Add(time.Duration(oauthToken.ExpiresIn) * time.Second)
+		tokenExpiresAt = &t
+	}
+
 	// Persist the mapping.
-	if err := h.store.UpsertUserMapping(username, slackUserID, token); err != nil {
+	if err := h.store.UpsertUserMapping(username, slackUserID, oauthToken.AccessToken, oauthToken.RefreshToken, tokenExpiresAt); err != nil {
 		slog.Error("upsert user mapping", "err", err)
 		http.Error(w, "Failed to save account link.", http.StatusInternalServerError)
 		return

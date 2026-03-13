@@ -3,6 +3,7 @@ package db_test
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/voriteam/pull-request-notifier/internal/db"
 )
@@ -28,8 +29,10 @@ func newTestStore(t *testing.T) *db.Store {
 func TestUserMapping(t *testing.T) {
 	store := newTestStore(t)
 
-	// Upsert a mapping.
-	if err := store.UpsertUserMapping("octocat", "U123456", "ghs_token"); err != nil {
+	expiry := time.Now().Add(8 * time.Hour).Truncate(time.Second)
+
+	// Upsert a mapping with refresh token and expiry.
+	if err := store.UpsertUserMapping("octocat", "U123456", "ghs_token", "ghr_refresh", &expiry); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 
@@ -56,14 +59,38 @@ func TestUserMapping(t *testing.T) {
 	if mapping.GitHubToken != "ghs_token" {
 		t.Errorf("got github_token %q, want ghs_token", mapping.GitHubToken)
 	}
+	if mapping.RefreshToken != "ghr_refresh" {
+		t.Errorf("got refresh_token %q, want ghr_refresh", mapping.RefreshToken)
+	}
+	if mapping.TokenExpiresAt == nil {
+		t.Fatal("expected token_expires_at, got nil")
+	}
+	if !mapping.TokenExpiresAt.Truncate(time.Second).Equal(expiry) {
+		t.Errorf("got token_expires_at %v, want %v", mapping.TokenExpiresAt, expiry)
+	}
 
 	// Upsert again to update the token.
-	if err := store.UpsertUserMapping("octocat", "U123456", "ghs_new_token"); err != nil {
+	if err := store.UpsertUserMapping("octocat", "U123456", "ghs_new_token", "ghr_new_refresh", nil); err != nil {
 		t.Fatalf("upsert update: %v", err)
 	}
 	mapping, _ = store.GetMappingBySlackUserID("U123456")
 	if mapping.GitHubToken != "ghs_new_token" {
 		t.Errorf("token not updated, got %q", mapping.GitHubToken)
+	}
+	if mapping.RefreshToken != "ghr_new_refresh" {
+		t.Errorf("refresh token not updated, got %q", mapping.RefreshToken)
+	}
+	if mapping.TokenExpiresAt != nil {
+		t.Errorf("expected nil token_expires_at after update with nil, got %v", mapping.TokenExpiresAt)
+	}
+
+	// Upsert with no refresh token (empty string).
+	if err := store.UpsertUserMapping("octocat2", "U789", "ghs_tok2", "", nil); err != nil {
+		t.Fatalf("upsert no refresh: %v", err)
+	}
+	mapping2, _ := store.GetMappingBySlackUserID("U789")
+	if mapping2.RefreshToken != "" {
+		t.Errorf("expected empty refresh_token, got %q", mapping2.RefreshToken)
 	}
 
 	// Unknown username returns empty string.

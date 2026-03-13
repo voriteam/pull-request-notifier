@@ -74,10 +74,16 @@ func (h *Handler) HandleLinkedAccounts(w http.ResponseWriter, r *http.Request) {
 <body>
 <h1>Linked Accounts</h1>
 <table>
-<tr><th>GitHub Username</th><th>Slack User ID</th><th>Linked</th></tr>`)
+<tr><th>GitHub Username</th><th>Slack User ID</th><th>Linked</th><th>Token Updated</th><th>Token Expires</th></tr>`)
 
 	for _, m := range mappings {
-		fmt.Fprintf(w, "<tr><td>%s</td><td>%s</td><td>%s</td></tr>\n", htmlEscape(m.GitHubUsername), htmlEscape(m.SlackUserID), htmlEscape(m.CreatedAt))
+		expires := m.TokenExpiresAt
+		if expires == "" {
+			expires = "never"
+		}
+		fmt.Fprintf(w, "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>\n",
+			htmlEscape(m.GitHubUsername), htmlEscape(m.SlackUserID), htmlEscape(m.CreatedAt),
+			htmlEscape(m.UpdatedAt), htmlEscape(expires))
 	}
 
 	fmt.Fprintf(w, `</table>
@@ -89,14 +95,14 @@ func (h *Handler) HandleLinkedAccounts(w http.ResponseWriter, r *http.Request) {
 // CompleteLogin is called from the shared OAuth callback when the state is "admin".
 // It exchanges the code, verifies org membership, sets a session cookie, and redirects.
 func (h *Handler) CompleteLogin(w http.ResponseWriter, r *http.Request, code string) {
-	token, err := h.github.ExchangeCode(r.Context(), h.clientID, h.clientSecret, code)
+	oauthToken, err := h.github.ExchangeCode(r.Context(), h.clientID, h.clientSecret, code)
 	if err != nil {
 		slog.Error("admin oauth exchange", "err", err)
 		http.Error(w, "GitHub authorization failed", http.StatusInternalServerError)
 		return
 	}
 
-	username, err := h.github.GetAuthenticatedUser(r.Context(), token)
+	username, err := h.github.GetAuthenticatedUser(r.Context(), oauthToken.AccessToken)
 	if err != nil {
 		slog.Error("admin get user", "err", err)
 		http.Error(w, "Failed to fetch GitHub user", http.StatusInternalServerError)

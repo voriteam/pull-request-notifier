@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -91,7 +92,7 @@ func (s *Store) migrate() error {
 		return err
 	}
 
-	// Add new columns to pr_messages (ignore errors if they already exist).
+	// Add new columns (ignore errors if they already exist).
 	for _, col := range []string{
 		"ALTER TABLE pr_messages ADD COLUMN pr_author TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE pr_messages ADD COLUMN pr_title TEXT NOT NULL DEFAULT ''",
@@ -100,6 +101,8 @@ func (s *Store) migrate() error {
 		"ALTER TABLE pr_messages ADD COLUMN pr_additions INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE pr_messages ADD COLUMN pr_deletions INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE pr_messages ADD COLUMN pr_draft INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE user_mappings ADD COLUMN refresh_token TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE user_mappings ADD COLUMN token_expires_at DATETIME",
 	} {
 		s.db.Exec(col) // Ignore "duplicate column" errors.
 	}
@@ -118,16 +121,19 @@ func (s *Store) migrate() error {
 
 // --- User Mappings ---
 
-// UpsertUserMapping stores or updates a GitHub username ↔ Slack user ID mapping.
-func (s *Store) UpsertUserMapping(githubUsername, slackUserID, githubToken string) error {
+// UpsertUserMapping stores or updates a GitHub username ↔ Slack user ID mapping,
+// including the OAuth refresh token and token expiry time.
+func (s *Store) UpsertUserMapping(githubUsername, slackUserID, githubToken, refreshToken string, tokenExpiresAt *time.Time) error {
 	_, err := s.db.Exec(`
-		INSERT INTO user_mappings (github_username, slack_user_id, github_token, updated_at)
-		VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+		INSERT INTO user_mappings (github_username, slack_user_id, github_token, refresh_token, token_expires_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(github_username) DO UPDATE SET
-			slack_user_id = excluded.slack_user_id,
-			github_token  = excluded.github_token,
-			updated_at    = CURRENT_TIMESTAMP
-	`, githubUsername, slackUserID, githubToken)
+			slack_user_id    = excluded.slack_user_id,
+			github_token     = excluded.github_token,
+			refresh_token    = excluded.refresh_token,
+			token_expires_at = excluded.token_expires_at,
+			updated_at       = CURRENT_TIMESTAMP
+	`, githubUsername, slackUserID, githubToken, refreshToken, tokenExpiresAt)
 	return err
 }
 
@@ -148,20 +154,26 @@ type UserMapping struct {
 	GitHubUsername string
 	SlackUserID    string
 	GitHubToken    string
+	RefreshToken   string
+	TokenExpiresAt *time.Time
 }
 
 // GetMappingBySlackUserID returns the full mapping for a Slack user ID.
 func (s *Store) GetMappingBySlackUserID(slackUserID string) (*UserMapping, error) {
 	var m UserMapping
+	var expiresAt sql.NullTime
 	err := s.db.QueryRow(
-		`SELECT github_username, slack_user_id, github_token FROM user_mappings WHERE slack_user_id = ?`,
+		`SELECT github_username, slack_user_id, github_token, refresh_token, token_expires_at FROM user_mappings WHERE slack_user_id = ?`,
 		slackUserID,
-	).Scan(&m.GitHubUsername, &m.SlackUserID, &m.GitHubToken)
+	).Scan(&m.GitHubUsername, &m.SlackUserID, &m.GitHubToken, &m.RefreshToken, &expiresAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
+	}
+	if expiresAt.Valid {
+		m.TokenExpiresAt = &expiresAt.Time
 	}
 	return &m, nil
 }
@@ -175,7 +187,7 @@ func (s *Store) DeleteMappingBySlackUserID(slackUserID string) error {
 // ListAllMappings returns all user mappings (without tokens).
 // ListAllMappings returns all user mappings (without tokens).
 func (s *Store) ListAllMappings() ([]UserMappingSummary, error) {
-	rows, err := s.db.Query(`SELECT github_username, slack_user_id, created_at FROM user_mappings ORDER BY github_username`)
+	rows, err := s.db.Query(`SELECT github_username, slack_user_id, created_at, updated_at, token_expires_at FROM user_mappings ORDER BY github_username COLLATE NOCASE`)
 	if err != nil {
 		return nil, err
 	}
@@ -184,9 +196,11 @@ func (s *Store) ListAllMappings() ([]UserMappingSummary, error) {
 	var mappings []UserMappingSummary
 	for rows.Next() {
 		var m UserMappingSummary
-		if err := rows.Scan(&m.GitHubUsername, &m.SlackUserID, &m.CreatedAt); err != nil {
+		var expiresAt sql.NullString
+		if err := rows.Scan(&m.GitHubUsername, &m.SlackUserID, &m.CreatedAt, &m.UpdatedAt, &expiresAt); err != nil {
 			return nil, err
 		}
+		m.TokenExpiresAt = expiresAt.String
 		mappings = append(mappings, m)
 	}
 	return mappings, rows.Err()
@@ -197,6 +211,8 @@ type UserMappingSummary struct {
 	GitHubUsername string
 	SlackUserID    string
 	CreatedAt      string
+	UpdatedAt      string
+	TokenExpiresAt string
 }
 
 // --- OAuth States ---

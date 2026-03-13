@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -21,21 +22,25 @@ import (
 
 // Handler handles Slack slash commands and block interactivity.
 type Handler struct {
-	signingSecret string
-	store         *db.Store
-	github        *github.Client
-	slack         *Client
-	oauthBaseURL  string
+	signingSecret      string
+	store              *db.Store
+	github             *github.Client
+	slack              *Client
+	oauthBaseURL       string
+	githubClientID     string
+	githubClientSecret string
 }
 
 // NewHandler creates a new Slack interaction handler.
-func NewHandler(signingSecret string, store *db.Store, githubClient *github.Client, slackClient *Client, oauthBaseURL string) *Handler {
+func NewHandler(signingSecret string, store *db.Store, githubClient *github.Client, slackClient *Client, oauthBaseURL, githubClientID, githubClientSecret string) *Handler {
 	return &Handler{
-		signingSecret: signingSecret,
-		store:         store,
-		github:        githubClient,
-		slack:         slackClient,
-		oauthBaseURL:  oauthBaseURL,
+		signingSecret:      signingSecret,
+		store:              store,
+		github:             githubClient,
+		slack:              slackClient,
+		oauthBaseURL:       oauthBaseURL,
+		githubClientID:     githubClientID,
+		githubClientSecret: githubClientSecret,
 	}
 }
 
@@ -210,7 +215,17 @@ func (h *Handler) handleReaction(slackUserID, blockID, reaction string) {
 		return
 	}
 
-	if err := h.github.AddReaction(context.Background(), mapping.GitHubToken, ctx.Repo, ctx.CommentID, ctx.CommentType, reaction); err != nil {
+	bgCtx := context.Background()
+	err = h.github.AddReaction(bgCtx, mapping.GitHubToken, ctx.Repo, ctx.CommentID, ctx.CommentType, reaction)
+	if err != nil && errors.Is(err, github.ErrUnauthorized) {
+		newToken, refreshErr := h.refreshUserToken(bgCtx, mapping)
+		if refreshErr != nil {
+			slog.Error("refresh token for reaction", "err", refreshErr)
+			return
+		}
+		err = h.github.AddReaction(bgCtx, newToken, ctx.Repo, ctx.CommentID, ctx.CommentType, reaction)
+	}
+	if err != nil {
 		slog.Error("add github reaction", "err", err)
 	}
 }
@@ -251,10 +266,58 @@ func (h *Handler) handleViewSubmission(w http.ResponseWriter, payload *interacti
 	w.WriteHeader(http.StatusOK) // Close the modal immediately.
 
 	go func() {
-		if err := h.github.PostReply(context.Background(), mapping.GitHubToken, ctx.Repo, ctx.PRNumber, ctx.CommentID, ctx.CommentType, replyText); err != nil {
+		bgCtx := context.Background()
+		err := h.github.PostReply(bgCtx, mapping.GitHubToken, ctx.Repo, ctx.PRNumber, ctx.CommentID, ctx.CommentType, replyText)
+		if err != nil && errors.Is(err, github.ErrUnauthorized) {
+			newToken, refreshErr := h.refreshUserToken(bgCtx, mapping)
+			if refreshErr != nil {
+				slog.Error("refresh token for reply", "err", refreshErr)
+				return
+			}
+			err = h.github.PostReply(bgCtx, newToken, ctx.Repo, ctx.PRNumber, ctx.CommentID, ctx.CommentType, replyText)
+		}
+		if err != nil {
 			slog.Error("post github reply", "err", err)
 		}
 	}()
+}
+
+// refreshUserToken uses the stored refresh token to obtain a new access token,
+// updates the DB, and returns the new access token. If the refresh fails or no
+// refresh token is stored, it DMs the user asking them to re-link.
+func (h *Handler) refreshUserToken(ctx context.Context, mapping *db.UserMapping) (string, error) {
+	if mapping.RefreshToken == "" {
+		h.notifyRelinkNeeded(ctx, mapping)
+		return "", fmt.Errorf("no refresh token stored for user %s", mapping.GitHubUsername)
+	}
+
+	oauthToken, err := h.github.RefreshToken(ctx, h.githubClientID, h.githubClientSecret, mapping.RefreshToken)
+	if err != nil {
+		h.notifyRelinkNeeded(ctx, mapping)
+		return "", fmt.Errorf("refresh github token: %w", err)
+	}
+
+	var tokenExpiresAt *time.Time
+	if oauthToken.ExpiresIn > 0 {
+		t := time.Now().Add(time.Duration(oauthToken.ExpiresIn) * time.Second)
+		tokenExpiresAt = &t
+	}
+
+	if err := h.store.UpsertUserMapping(mapping.GitHubUsername, mapping.SlackUserID, oauthToken.AccessToken, oauthToken.RefreshToken, tokenExpiresAt); err != nil {
+		return "", fmt.Errorf("update refreshed token: %w", err)
+	}
+
+	slog.Info("refreshed github token", "github_username", mapping.GitHubUsername)
+	return oauthToken.AccessToken, nil
+}
+
+// notifyRelinkNeeded sends a Slack DM asking the user to re-link their GitHub account.
+func (h *Handler) notifyRelinkNeeded(ctx context.Context, mapping *db.UserMapping) {
+	text := "Your GitHub token has expired. Please run `/link-github` to re-authorize."
+	blocks := []Block{sectionBlock(text)}
+	if _, err := h.slack.PostDM(ctx, mapping.SlackUserID, blocks, text); err != nil {
+		slog.Error("notify relink needed", "err", err, "slack_user_id", mapping.SlackUserID)
+	}
 }
 
 // --- Signature verification ---
