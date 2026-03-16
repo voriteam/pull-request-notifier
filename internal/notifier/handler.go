@@ -409,7 +409,16 @@ func (h *Handler) handlePullRequestReview(ctx context.Context, body []byte) {
 	pr := evt.PullRequest
 	reviewerName := h.github.GetUserDisplayName(ctx, reviewer)
 	blocks := slack.ReviewSubmittedBlocks(reviewerName, pr.Title, pr.HTMLURL, state, evt.Review.Body)
-	fallback := fmt.Sprintf("%s reviewed %s", reviewerName, pr.Title)
+	var action string
+	switch state {
+	case "approved":
+		action = "approved"
+	case "changes_requested":
+		action = "requested changes for"
+	default:
+		action = "reviewed"
+	}
+	fallback := fmt.Sprintf("%s %s %s", reviewerName, action, pr.Title)
 
 	if _, err := h.slack.PostDM(ctx, slackUserID, blocks, fallback); err != nil {
 		slog.Error("send review submitted DM", "err", err)
