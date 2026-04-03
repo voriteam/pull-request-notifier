@@ -145,24 +145,24 @@ func (h *Handler) verifySignature(signature string, body []byte) bool {
 // --- Event types ---
 
 type pullRequestEvent struct {
-	Action      string      `json:"action"`
-	PullRequest pullRequest `json:"pull_request"`
-	Sender      ghUser      `json:"sender"`
-	RequestedReviewer *ghUser `json:"requested_reviewer"`
-	Repository  ghRepo      `json:"repository"`
+	Action            string      `json:"action"`
+	PullRequest       pullRequest `json:"pull_request"`
+	Sender            ghUser      `json:"sender"`
+	RequestedReviewer *ghUser     `json:"requested_reviewer"`
+	Repository        ghRepo      `json:"repository"`
 }
 
 type pullRequest struct {
-	Number    int    `json:"number"`
-	Title     string `json:"title"`
-	HTMLURL   string `json:"html_url"`
-	State     string `json:"state"`
-	Merged    bool   `json:"merged"`
-	User      ghUser `json:"user"`
-	Additions int    `json:"additions"`
-	Deletions int    `json:"deletions"`
-	ChangedFiles int `json:"changed_files"`
-	Draft     bool   `json:"draft"`
+	Number       int    `json:"number"`
+	Title        string `json:"title"`
+	HTMLURL      string `json:"html_url"`
+	State        string `json:"state"`
+	Merged       bool   `json:"merged"`
+	User         ghUser `json:"user"`
+	Additions    int    `json:"additions"`
+	Deletions    int    `json:"deletions"`
+	ChangedFiles int    `json:"changed_files"`
+	Draft        bool   `json:"draft"`
 }
 
 type pullRequestReviewEvent struct {
@@ -186,10 +186,10 @@ type pullRequestReviewCommentEvent struct {
 }
 
 type issueCommentEvent struct {
-	Action  string      `json:"action"`
-	Comment comment     `json:"comment"`
-	Issue   issue       `json:"issue"`
-	Repository ghRepo   `json:"repository"`
+	Action     string  `json:"action"`
+	Comment    comment `json:"comment"`
+	Issue      issue   `json:"issue"`
+	Repository ghRepo  `json:"repository"`
 }
 
 type issue struct {
@@ -219,17 +219,17 @@ type checkRunEvent struct {
 }
 
 type checkRun struct {
-	Name        string        `json:"name"`
-	Status      string        `json:"status"`
-	Conclusion  string        `json:"conclusion"`
-	HTMLURL     string        `json:"html_url"`
+	Name         string       `json:"name"`
+	Status       string       `json:"status"`
+	Conclusion   string       `json:"conclusion"`
+	HTMLURL      string       `json:"html_url"`
 	PullRequests []checkRunPR `json:"pull_requests"`
-	HeadSHA     string        `json:"head_sha"`
+	HeadSHA      string       `json:"head_sha"`
 }
 
 type checkRunPR struct {
-	Number int    `json:"number"`
-	Head   prRef  `json:"head"`
+	Number int   `json:"number"`
+	Head   prRef `json:"head"`
 }
 
 type prRef struct {

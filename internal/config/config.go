@@ -7,17 +7,17 @@ import (
 
 // Config holds all runtime configuration loaded from environment variables.
 type Config struct {
-	Port                string
-	DBPath              string
-	BaseURL             string
-	GitHubClientID      string
-	GitHubClientSecret  string
-	GitHubWebhookSecret string
-	GitHubAppID         string
-	GitHubPrivateKey    string
+	Port                 string
+	DBPath               string
+	BaseURL              string
+	GitHubClientID       string
+	GitHubClientSecret   string
+	GitHubWebhookSecret  string
+	GitHubAppID          string
+	GitHubPrivateKey     string
 	GitHubInstallationID string
-	SlackBotToken       string
-	SlackSigningSecret  string
+	SlackBotToken        string
+	SlackSigningSecret   string
 }
 
 // Load reads configuration from environment variables. Panics on missing required values.

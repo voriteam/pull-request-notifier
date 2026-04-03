@@ -351,11 +351,11 @@ func (h *Handler) verifyAndRead(r *http.Request) ([]byte, error) {
 // --- Interaction payload types ---
 
 type interactionPayload struct {
-	Type      string       `json:"type"`
-	TriggerID string       `json:"trigger_id"`
-	User      slackUser    `json:"user"`
+	Type      string        `json:"type"`
+	TriggerID string        `json:"trigger_id"`
+	User      slackUser     `json:"user"`
 	Actions   []slackAction `json:"actions"`
-	View      slackView    `json:"view"`
+	View      slackView     `json:"view"`
 }
 
 type slackUser struct {
@@ -363,10 +363,10 @@ type slackUser struct {
 }
 
 type slackAction struct {
-	ActionID       string             `json:"action_id"`
-	BlockID        string             `json:"block_id"`
-	Value          string             `json:"value"`
-	SelectedOption slackSelectOption  `json:"selected_option"`
+	ActionID       string            `json:"action_id"`
+	BlockID        string            `json:"block_id"`
+	Value          string            `json:"value"`
+	SelectedOption slackSelectOption `json:"selected_option"`
 }
 
 type slackSelectOption struct {
@@ -374,9 +374,9 @@ type slackSelectOption struct {
 }
 
 type slackView struct {
-	CallbackID      string     `json:"callback_id"`
-	PrivateMetadata string     `json:"private_metadata"`
-	State           viewState  `json:"state"`
+	CallbackID      string    `json:"callback_id"`
+	PrivateMetadata string    `json:"private_metadata"`
+	State           viewState `json:"state"`
 }
 
 type viewState struct {

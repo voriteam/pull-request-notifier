@@ -29,10 +29,10 @@ func DecodeCommentContext(s string) (CommentContext, error) {
 
 // block/element type constants matching Slack's Block Kit spec.
 const (
-	blockSection = "section"
-	blockContext = "context"
-	blockActions = "actions"
-	blockInput   = "input"
+	blockSection  = "section"
+	blockContext  = "context"
+	blockActions  = "actions"
+	blockInput    = "input"
 	textMrkdwn    = "mrkdwn"
 	textPlainText = "plain_text"
 )

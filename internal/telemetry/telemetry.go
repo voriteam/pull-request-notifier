@@ -111,4 +111,3 @@ func (f fanoutHandler) WithGroup(name string) slog.Handler {
 
 // Ensure fanoutHandler implements slog.Handler.
 var _ slog.Handler = fanoutHandler{}
-
