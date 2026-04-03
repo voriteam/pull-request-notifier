@@ -88,20 +88,15 @@ func (h *Handler) HandleLinkedAccounts(w http.ResponseWriter, r *http.Request) {
 			htmlEscape(m.UpdatedAt), htmlEscape(expires))
 	}
 
-	botComments := "disabled"
-	if h.enableBotComments {
-		botComments = "enabled"
-	}
-
 	fmt.Fprintf(w, `</table>
 <h2>Configuration</h2>
 <table>
 <tr><th>Setting</th><th>Value</th></tr>
-<tr><td>Bot comment notifications</td><td>%s</td></tr>
+<tr><td>Bot comment notifications</td><td>%v</td></tr>
 </table>
 <p class="meta">Signed in as %s &middot; %d linked accounts</p>
 </body>
-</html>`, botComments, htmlEscape(username), len(mappings))
+</html>`, h.enableBotComments, htmlEscape(username), len(mappings))
 }
 
 // CompleteLogin is called from the shared OAuth callback when the state is "admin".
