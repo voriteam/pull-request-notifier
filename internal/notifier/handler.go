@@ -25,19 +25,21 @@ var tracer = otel.Tracer("pull-request-notifier/notifier")
 
 // Handler processes GitHub webhook events and sends Slack DMs.
 type Handler struct {
-	webhookSecret string
-	store         *db.Store
-	slack         *slack.Client
-	github        *github.Client
+	webhookSecret     string
+	enableBotComments bool
+	store             *db.Store
+	slack             *slack.Client
+	github            *github.Client
 }
 
 // NewHandler creates a new GitHub webhook handler.
-func NewHandler(webhookSecret string, store *db.Store, slackClient *slack.Client, githubClient *github.Client) *Handler {
+func NewHandler(webhookSecret string, enableBotComments bool, store *db.Store, slackClient *slack.Client, githubClient *github.Client) *Handler {
 	return &Handler{
-		webhookSecret: webhookSecret,
-		store:         store,
-		slack:         slackClient,
-		github:        githubClient,
+		webhookSecret:     webhookSecret,
+		enableBotComments: enableBotComments,
+		store:             store,
+		slack:             slackClient,
+		github:            githubClient,
 	}
 }
 
@@ -238,6 +240,12 @@ type prRef struct {
 
 type ghUser struct {
 	Login string `json:"login"`
+	Type  string `json:"type"`
+}
+
+// isBot returns true if the GitHub user is a bot account.
+func isBot(u ghUser) bool {
+	return u.Type == "Bot" || strings.HasSuffix(u.Login, "[bot]")
 }
 
 type ghRepo struct {
@@ -298,7 +306,7 @@ func (h *Handler) handleReviewRequested(ctx context.Context, evt *pullRequestEve
 
 	authorName := h.github.GetUserDisplayName(ctx, pr.User.Login)
 
-	activity, err := h.github.GetPRActivity(ctx, evt.Repository.FullName, pr.Number)
+	activity, err := h.github.GetPRActivity(ctx, evt.Repository.FullName, pr.Number, h.enableBotComments)
 	if err != nil {
 		slog.Error("fetch pr activity", "err", err)
 	}
@@ -339,7 +347,7 @@ func (h *Handler) handlePRClosed(ctx context.Context, evt *pullRequestEvent) {
 		return
 	}
 
-	activity, err := h.github.GetPRActivity(ctx, repo, pr.Number)
+	activity, err := h.github.GetPRActivity(ctx, repo, pr.Number, h.enableBotComments)
 	if err != nil {
 		slog.Error("fetch pr activity for close", "err", err)
 	}
@@ -449,6 +457,11 @@ func (h *Handler) handlePullRequestReviewComment(ctx context.Context, body []byt
 		return
 	}
 
+	// Don't notify about bot comments (unless enabled).
+	if !h.enableBotComments && isBot(evt.Comment.User) {
+		return
+	}
+
 	slackUserID, err := h.store.GetMappingByGitHubUsername(prAuthor)
 	if err != nil || slackUserID == "" {
 		return
@@ -506,6 +519,11 @@ func (h *Handler) handleIssueComment(ctx context.Context, body []byte) {
 	prAuthor := evt.Issue.User.Login
 	commenter := evt.Comment.User.Login
 	if commenter == prAuthor {
+		return
+	}
+
+	// Don't notify about bot comments (unless enabled).
+	if !h.enableBotComments && isBot(evt.Comment.User) {
 		return
 	}
 
@@ -614,7 +632,7 @@ func (h *Handler) refreshPRMessages(ctx context.Context, repo string, pr pullReq
 		return
 	}
 
-	activity, err := h.github.GetPRActivity(ctx, repo, pr.Number)
+	activity, err := h.github.GetPRActivity(ctx, repo, pr.Number, h.enableBotComments)
 	if err != nil {
 		slog.Error("fetch pr activity for refresh", "err", err)
 		return

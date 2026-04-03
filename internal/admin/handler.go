@@ -17,23 +17,25 @@ const sessionCookieName = "admin_session"
 
 // Handler serves the admin UI with GitHub OAuth authentication.
 type Handler struct {
-	clientID     string
-	clientSecret string
-	baseURL      string
-	signingKey   string // used to HMAC-sign session cookies
-	store        *db.Store
-	github       *github.Client
+	clientID          string
+	clientSecret      string
+	baseURL           string
+	signingKey        string // used to HMAC-sign session cookies
+	enableBotComments bool
+	store             *db.Store
+	github            *github.Client
 }
 
 // NewHandler creates a new admin handler.
-func NewHandler(clientID, clientSecret, baseURL, signingKey string, store *db.Store, githubClient *github.Client) *Handler {
+func NewHandler(clientID, clientSecret, baseURL, signingKey string, enableBotComments bool, store *db.Store, githubClient *github.Client) *Handler {
 	return &Handler{
-		clientID:     clientID,
-		clientSecret: clientSecret,
-		baseURL:      baseURL,
-		signingKey:   signingKey,
-		store:        store,
-		github:       githubClient,
+		clientID:          clientID,
+		clientSecret:      clientSecret,
+		baseURL:           baseURL,
+		signingKey:        signingKey,
+		enableBotComments: enableBotComments,
+		store:             store,
+		github:            githubClient,
 	}
 }
 
@@ -86,10 +88,20 @@ func (h *Handler) HandleLinkedAccounts(w http.ResponseWriter, r *http.Request) {
 			htmlEscape(m.UpdatedAt), htmlEscape(expires))
 	}
 
+	botComments := "disabled"
+	if h.enableBotComments {
+		botComments = "enabled"
+	}
+
 	fmt.Fprintf(w, `</table>
+<h2>Configuration</h2>
+<table>
+<tr><th>Setting</th><th>Value</th></tr>
+<tr><td>Bot comment notifications</td><td>%s</td></tr>
+</table>
 <p class="meta">Signed in as %s &middot; %d linked accounts</p>
 </body>
-</html>`, htmlEscape(username), len(mappings))
+</html>`, botComments, htmlEscape(username), len(mappings))
 }
 
 // CompleteLogin is called from the shared OAuth callback when the state is "admin".
