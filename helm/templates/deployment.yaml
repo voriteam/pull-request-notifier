@@ -41,6 +41,8 @@ spec:
               value: {{ .Values.config.baseURL | quote }}
             - name: DB_PATH
               value: {{ .Values.config.dbPath | quote }}
+            - name: ENABLE_BOT_COMMENTS
+              value: {{ .Values.config.enableBotComments | quote }}
             {{- $secretName := default (printf "%s-secrets" .Release.Name) .Values.existingSecret }}
             - name: GITHUB_CLIENT_ID
               valueFrom:

@@ -161,6 +161,11 @@ func (c *Client) GetUserDisplayName(ctx context.Context, login string) string {
 	return name
 }
 
+// IsBot returns true if the GitHub user appears to be a bot account.
+func IsBot(login, userType string) bool {
+	return userType == "Bot" || strings.HasSuffix(login, "[bot]")
+}
+
 // PRActivity holds aggregated review and comment activity for a PR.
 type PRActivity struct {
 	Approvals     []string       // display names of users who approved
@@ -169,7 +174,8 @@ type PRActivity struct {
 }
 
 // GetPRActivity fetches reviews and comments for a PR using an installation token.
-func (c *Client) GetPRActivity(ctx context.Context, repo string, prNumber int) (*PRActivity, error) {
+// When includeBots is false, comments from bot accounts are excluded from counts.
+func (c *Client) GetPRActivity(ctx context.Context, repo string, prNumber int, includeBots bool) (*PRActivity, error) {
 	token, err := c.GetInstallationToken()
 	if err != nil {
 		return nil, fmt.Errorf("get installation token: %w", err)
@@ -208,12 +214,18 @@ func (c *Client) GetPRActivity(ctx context.Context, repo string, prNumber int) (
 	// Fetch review comments (inline code comments)
 	reviewCommentsPath := fmt.Sprintf("/repos/%s/%s/pulls/%d/comments?per_page=100", owner, repoName, prNumber)
 	var reviewComments []struct {
-		User struct{ Login string } `json:"user"`
+		User struct {
+			Login string `json:"login"`
+			Type  string `json:"type"`
+		} `json:"user"`
 	}
 	if err := c.get(ctx, token, reviewCommentsPath, &reviewComments); err != nil {
 		slog.Error("fetch pr review comments", "err", err)
 	} else {
 		for _, rc := range reviewComments {
+			if !includeBots && IsBot(rc.User.Login, rc.User.Type) {
+				continue
+			}
 			activity.Commenters[c.GetUserDisplayName(ctx, rc.User.Login)]++
 			activity.TotalComments++
 		}
@@ -222,12 +234,18 @@ func (c *Client) GetPRActivity(ctx context.Context, repo string, prNumber int) (
 	// Fetch issue comments (top-level PR comments)
 	issueCommentsPath := fmt.Sprintf("/repos/%s/%s/issues/%d/comments?per_page=100", owner, repoName, prNumber)
 	var issueComments []struct {
-		User struct{ Login string } `json:"user"`
+		User struct {
+			Login string `json:"login"`
+			Type  string `json:"type"`
+		} `json:"user"`
 	}
 	if err := c.get(ctx, token, issueCommentsPath, &issueComments); err != nil {
 		slog.Error("fetch pr issue comments", "err", err)
 	} else {
 		for _, ic := range issueComments {
+			if !includeBots && IsBot(ic.User.Login, ic.User.Type) {
+				continue
+			}
 			activity.Commenters[c.GetUserDisplayName(ctx, ic.User.Login)]++
 			activity.TotalComments++
 		}

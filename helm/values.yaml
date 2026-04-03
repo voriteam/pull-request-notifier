@@ -12,6 +12,7 @@ config:
   baseURL: ""
   port: "8080"
   dbPath: "/data/pr-notifier.db"
+  enableBotComments: false
 
 # Provide credentials inline (for dev/testing).
 secrets:

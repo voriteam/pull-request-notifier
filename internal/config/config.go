@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 // Config holds all runtime configuration loaded from environment variables.
@@ -18,6 +19,7 @@ type Config struct {
 	GitHubInstallationID string
 	SlackBotToken        string
 	SlackSigningSecret   string
+	EnableBotComments    bool
 }
 
 // Load reads configuration from environment variables. Panics on missing required values.
@@ -34,6 +36,7 @@ func Load() *Config {
 		GitHubInstallationID: mustGetEnv("GITHUB_INSTALLATION_ID"),
 		SlackBotToken:        mustGetEnv("SLACK_BOT_TOKEN"),
 		SlackSigningSecret:   mustGetEnv("SLACK_SIGNING_SECRET"),
+		EnableBotComments:    getBoolEnv("ENABLE_BOT_COMMENTS", false),
 	}
 }
 
@@ -42,6 +45,14 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func getBoolEnv(key string, fallback bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	return strings.EqualFold(v, "true") || v == "1"
 }
 
 func mustGetEnv(key string) string {
