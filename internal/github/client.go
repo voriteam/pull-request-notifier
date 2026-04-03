@@ -161,6 +161,11 @@ func (c *Client) GetUserDisplayName(ctx context.Context, login string) string {
 	return name
 }
 
+// IsBot returns true if the GitHub user appears to be a bot account.
+func IsBot(login, userType string) bool {
+	return userType == "Bot" || strings.HasSuffix(login, "[bot]")
+}
+
 // PRActivity holds aggregated review and comment activity for a PR.
 type PRActivity struct {
 	Approvals     []string       // display names of users who approved
@@ -218,7 +223,7 @@ func (c *Client) GetPRActivity(ctx context.Context, repo string, prNumber int, i
 		slog.Error("fetch pr review comments", "err", err)
 	} else {
 		for _, rc := range reviewComments {
-			if !includeBots && rc.User.Type == "Bot" {
+			if !includeBots && IsBot(rc.User.Login, rc.User.Type) {
 				continue
 			}
 			activity.Commenters[c.GetUserDisplayName(ctx, rc.User.Login)]++
@@ -238,7 +243,7 @@ func (c *Client) GetPRActivity(ctx context.Context, repo string, prNumber int, i
 		slog.Error("fetch pr issue comments", "err", err)
 	} else {
 		for _, ic := range issueComments {
-			if !includeBots && ic.User.Type == "Bot" {
+			if !includeBots && IsBot(ic.User.Login, ic.User.Type) {
 				continue
 			}
 			activity.Commenters[c.GetUserDisplayName(ctx, ic.User.Login)]++

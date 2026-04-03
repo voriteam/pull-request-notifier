@@ -245,7 +245,7 @@ type ghUser struct {
 
 // isBot returns true if the GitHub user is a bot account.
 func isBot(u ghUser) bool {
-	return u.Type == "Bot" || strings.HasSuffix(u.Login, "[bot]")
+	return github.IsBot(u.Login, u.Type)
 }
 
 type ghRepo struct {
@@ -444,6 +444,11 @@ func (h *Handler) handlePullRequestReviewComment(ctx context.Context, body []byt
 		return
 	}
 
+	// Don't notify about bot comments (unless enabled).
+	if !h.enableBotComments && isBot(evt.Comment.User) {
+		return
+	}
+
 	pr := evt.PullRequest
 	repo := evt.Repository.FullName
 
@@ -454,11 +459,6 @@ func (h *Handler) handlePullRequestReviewComment(ctx context.Context, body []byt
 	prAuthor := pr.User.Login
 	commenter := evt.Comment.User.Login
 	if commenter == prAuthor {
-		return
-	}
-
-	// Don't notify about bot comments (unless enabled).
-	if !h.enableBotComments && isBot(evt.Comment.User) {
 		return
 	}
 
@@ -505,6 +505,11 @@ func (h *Handler) handleIssueComment(ctx context.Context, body []byte) {
 		return
 	}
 
+	// Don't notify about bot comments (unless enabled).
+	if !h.enableBotComments && isBot(evt.Comment.User) {
+		return
+	}
+
 	repo := evt.Repository.FullName
 
 	// Refresh all existing review-requested DMs for this PR with updated activity.
@@ -519,11 +524,6 @@ func (h *Handler) handleIssueComment(ctx context.Context, body []byte) {
 	prAuthor := evt.Issue.User.Login
 	commenter := evt.Comment.User.Login
 	if commenter == prAuthor {
-		return
-	}
-
-	// Don't notify about bot comments (unless enabled).
-	if !h.enableBotComments && isBot(evt.Comment.User) {
 		return
 	}
 
