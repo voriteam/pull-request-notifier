@@ -273,8 +273,8 @@ func (s *Store) SavePRMessage(repo string, prNumber int, slackUserID, messageTS 
 
 // PRMessage represents a stored review-requested DM.
 type PRMessage struct {
-	SlackUserID  string
-	MessageTS    string
+	SlackUserID string
+	MessageTS   string
 	PRInfo
 }
 

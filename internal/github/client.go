@@ -41,10 +41,10 @@ type Client struct {
 	privateKey     *rsa.PrivateKey
 	installationID int64
 
-	mu               sync.Mutex
-	installToken     string
-	installTokenExp  time.Time
-	installOrg       string
+	mu              sync.Mutex
+	installToken    string
+	installTokenExp time.Time
+	installOrg      string
 
 	nameMu    sync.RWMutex
 	nameCache map[string]cachedName

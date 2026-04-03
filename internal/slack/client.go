@@ -67,7 +67,6 @@ func (c *Client) UpdateDM(ctx context.Context, userID, ts string, blocks []Block
 	return c.UpdateMessage(ctx, channelID, ts, blocks, fallbackText)
 }
 
-
 // UpdateMessage edits an existing Slack message in-place.
 func (c *Client) UpdateMessage(ctx context.Context, channel, ts string, blocks []Block, fallbackText string) error {
 	payload := map[string]any{
