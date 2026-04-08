@@ -165,8 +165,8 @@ func ReviewSubmittedBlocks(reviewerLogin, prTitle, prURL, state, body string) []
 }
 
 // CommentBlocks builds the payload for a PR comment or review comment DM, with interactive buttons.
-func CommentBlocks(commenterLogin, prTitle, prURL string, commentBody string, ctx CommentContext) []block {
-	header := fmt.Sprintf("*%s* commented on *<%s|%s>*:", commenterLogin, prURL, prTitle)
+func CommentBlocks(commenterLogin, prTitle, commentURL string, commentBody string, ctx CommentContext) []block {
+	header := fmt.Sprintf("*%s* commented on *<%s|%s>*:", commenterLogin, commentURL, prTitle)
 	blockID := ctx.Encode()
 
 	return []block{

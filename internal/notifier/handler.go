@@ -475,7 +475,7 @@ func (h *Handler) handlePullRequestReviewComment(ctx context.Context, body []byt
 	}
 
 	commenterName := h.github.GetUserDisplayName(ctx, commenter)
-	blocks := slack.CommentBlocks(commenterName, pr.Title, pr.HTMLURL, evt.Comment.Body, commentCtx)
+	blocks := slack.CommentBlocks(commenterName, pr.Title, evt.Comment.HTMLURL, evt.Comment.Body, commentCtx)
 	fallback := fmt.Sprintf("%s commented on %s", commenterName, pr.Title)
 
 	ts, err := h.slack.PostDM(ctx, slackUserID, blocks, fallback)
@@ -540,7 +540,7 @@ func (h *Handler) handleIssueComment(ctx context.Context, body []byte) {
 	}
 
 	commenterName := h.github.GetUserDisplayName(ctx, commenter)
-	blocks := slack.CommentBlocks(commenterName, evt.Issue.Title, evt.Issue.HTMLURL, evt.Comment.Body, commentCtx)
+	blocks := slack.CommentBlocks(commenterName, evt.Issue.Title, evt.Comment.HTMLURL, evt.Comment.Body, commentCtx)
 	fallback := fmt.Sprintf("%s commented on %s", commenterName, evt.Issue.Title)
 
 	ts, err := h.slack.PostDM(ctx, slackUserID, blocks, fallback)
