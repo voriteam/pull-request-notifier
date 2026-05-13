@@ -520,38 +520,40 @@ func (h *Handler) handleIssueComment(ctx context.Context, body []byte) {
 		User:    evt.Issue.User,
 	})
 
-	// Don't notify the commenter about their own comment.
 	prAuthor := evt.Issue.User.Login
 	commenter := evt.Comment.User.Login
-	if commenter == prAuthor {
-		return
-	}
-
-	slackUserID, err := h.store.GetMappingByGitHubUsername(prAuthor)
-	if err != nil || slackUserID == "" {
-		return
-	}
+	commenterName := h.github.GetUserDisplayName(ctx, commenter)
 
 	commentCtx := slack.CommentContext{
 		Repo:        repo,
 		PRNumber:    evt.Issue.Number,
 		CommentID:   evt.Comment.ID,
 		CommentType: "pr_comment",
+		Commenter:   commenter,
 	}
 
-	commenterName := h.github.GetUserDisplayName(ctx, commenter)
-	blocks := slack.CommentBlocks(commenterName, evt.Issue.Title, evt.Comment.HTMLURL, evt.Comment.Body, commentCtx)
-	fallback := fmt.Sprintf("%s commented on %s", commenterName, evt.Issue.Title)
+	notified := map[string]bool{strings.ToLower(commenter): true}
 
-	ts, err := h.slack.PostDM(ctx, slackUserID, blocks, fallback)
-	if err != nil {
-		slog.Error("send issue comment DM", "err", err)
-		return
+	// Notify the PR author (skip self-comments).
+	if commenter != prAuthor {
+		slackUserID, err := h.store.GetMappingByGitHubUsername(prAuthor)
+		if err == nil && slackUserID != "" {
+			blocks := slack.CommentBlocks(commenterName, evt.Issue.Title, evt.Comment.HTMLURL, evt.Comment.Body, commentCtx)
+			fallback := fmt.Sprintf("%s commented on %s", commenterName, evt.Issue.Title)
+			ts, err := h.slack.PostDM(ctx, slackUserID, blocks, fallback)
+			if err != nil {
+				slog.Error("send issue comment DM", "err", err)
+			} else {
+				if err := h.store.SaveCommentMessage(repo, evt.Issue.Number, evt.Comment.ID, "pr_comment", slackUserID, ts); err != nil {
+					slog.Error("save comment message", "err", err)
+				}
+				notified[strings.ToLower(prAuthor)] = true
+			}
+		}
 	}
 
-	if err := h.store.SaveCommentMessage(repo, evt.Issue.Number, evt.Comment.ID, "pr_comment", slackUserID, ts); err != nil {
-		slog.Error("save comment message", "err", err)
-	}
+	// Notify users @-mentioned in the comment body.
+	h.notifyMentions(ctx, evt.Comment.Body, commenterName, evt.Issue.Title, evt.Comment.HTMLURL, commentCtx, notified)
 }
 
 func (h *Handler) handleCheckRun(ctx context.Context, body []byte) {
@@ -617,6 +619,43 @@ func (h *Handler) handleCheckRun(ctx context.Context, body []byte) {
 			prLog.Error("check_run.send_dm_failed", "slack.user_id", slackUserID, "err", err)
 		} else {
 			prLog.Info("check_run.notified", "github.author", author, "slack.user_id", slackUserID)
+		}
+	}
+}
+
+// notifyMentions DMs every linked GitHub user @-mentioned in body that
+// isn't already in notified. Updates notified with each successfully
+// DM'd login (lowercased) so callers can chain or check afterward.
+func (h *Handler) notifyMentions(
+	ctx context.Context,
+	body, commenterName, prTitle, commentURL string,
+	commentCtx slack.CommentContext,
+	notified map[string]bool,
+) {
+	for _, login := range extractMentions(body) {
+		key := strings.ToLower(login)
+		if notified[key] {
+			continue
+		}
+		slackUserID, err := h.store.GetMappingByGitHubUsername(login)
+		if err != nil {
+			slog.Error("lookup mention mapping", "github", login, "err", err)
+			continue
+		}
+		if slackUserID == "" {
+			continue
+		}
+		notified[key] = true
+
+		blocks := slack.MentionBlocks(commenterName, prTitle, commentURL, body, commentCtx)
+		fallback := fmt.Sprintf("%s mentioned you on %s", commenterName, prTitle)
+		ts, err := h.slack.PostDM(ctx, slackUserID, blocks, fallback)
+		if err != nil {
+			slog.Error("send mention DM", "github", login, "err", err)
+			continue
+		}
+		if err := h.store.SaveCommentMessage(commentCtx.Repo, commentCtx.PRNumber, commentCtx.CommentID, commentCtx.CommentType, slackUserID, ts); err != nil {
+			slog.Error("save mention message", "err", err)
 		}
 	}
 }

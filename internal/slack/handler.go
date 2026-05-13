@@ -250,6 +250,10 @@ func (h *Handler) handleViewSubmission(w http.ResponseWriter, payload *interacti
 		return
 	}
 
+	// Auto-prefix the reply with @<original commenter> so GitHub notifies
+	// them — without it, the original sender has no signal a reply landed.
+	replyText = prefixMention(replyText, ctx.Commenter)
+
 	mapping, err := h.store.GetMappingBySlackUserID(payload.User.ID)
 	if err != nil || mapping == nil {
 		slog.Warn("no github mapping for slack user", "slack_user_id", payload.User.ID)
@@ -392,6 +396,20 @@ type viewValue struct {
 func jsonResponse(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
+}
+
+// prefixMention prepends "@<commenter> " to body unless commenter is empty
+// or body already starts with that mention (case-insensitive).
+func prefixMention(body, commenter string) string {
+	if commenter == "" {
+		return body
+	}
+	trimmed := strings.TrimLeft(body, " \t")
+	prefix := "@" + commenter
+	if len(trimmed) >= len(prefix) && strings.EqualFold(trimmed[:len(prefix)], prefix) {
+		return body
+	}
+	return prefix + " " + body
 }
 
 func abs(x int64) int64 {
