@@ -645,7 +645,6 @@ func (h *Handler) notifyMentions(
 		if slackUserID == "" {
 			continue
 		}
-		notified[key] = true
 
 		blocks := slack.MentionBlocks(commenterName, prTitle, commentURL, body, commentCtx)
 		fallback := fmt.Sprintf("%s mentioned you on %s", commenterName, prTitle)
@@ -654,6 +653,7 @@ func (h *Handler) notifyMentions(
 			slog.Error("send mention DM", "github", login, "err", err)
 			continue
 		}
+		notified[key] = true
 		if err := h.store.SaveCommentMessage(commentCtx.Repo, commentCtx.PRNumber, commentCtx.CommentID, commentCtx.CommentType, slackUserID, ts); err != nil {
 			slog.Error("save mention message", "err", err)
 		}

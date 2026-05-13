@@ -16,6 +16,8 @@ func TestPrefixMention(t *testing.T) {
 		{"leading whitespace counts as already mentioned", "  @alice hi", "alice", "  @alice hi"},
 		{"prefix when mention appears later", "hi @alice", "alice", "@alice hi @alice"},
 		{"different user already mentioned still prefixes", "@bob hi", "alice", "@alice @bob hi"},
+		{"prefix-of-another-login still prefixes", "@alice2 hi", "alice", "@alice @alice2 hi"},
+		{"trailing newline trimmed", "\n@alice hi", "alice", "\n@alice hi"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

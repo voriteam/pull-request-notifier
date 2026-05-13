@@ -6,10 +6,12 @@ import (
 )
 
 // mentionPattern matches a GitHub @-mention in a comment body.
-// Group 1 is the username. The leading and trailing assertions reject
-// matches inside email addresses (e.g., user@example.com) and team
-// mentions (e.g., @org/team).
-var mentionPattern = regexp.MustCompile(`(?:^|[^A-Za-z0-9])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))(?:[^A-Za-z0-9/-]|$)`)
+// Group 1 is the username. The leading boundary excludes characters
+// that can appear in an email local-part (alphanumerics and `-`) so
+// addresses like `user@example.com` and `foo-@example.com` are not
+// misread as mentions. The trailing boundary rejects team mentions
+// (e.g., `@org/team`) and lets trailing hyphens fall to the post-filter.
+var mentionPattern = regexp.MustCompile(`(?:^|[^A-Za-z0-9-])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))(?:[^A-Za-z0-9/-]|$)`)
 
 // extractMentions returns deduplicated GitHub usernames @-mentioned in
 // body, in first-seen order, preserving original casing. Dedup is

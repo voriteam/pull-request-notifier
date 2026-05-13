@@ -18,6 +18,7 @@ func TestExtractMentions(t *testing.T) {
 		{"multiple with punctuation", "@bob, @carol and @dave!", []string{"bob", "carol", "dave"}},
 		{"adjacent", "@bob @carol", []string{"bob", "carol"}},
 		{"email rejected", "contact me at user@example.com", nil},
+		{"hyphenated email rejected", "send to foo-@example.com please", nil},
 		{"email with mention nearby", "ping @alice or user@example.com", []string{"alice"}},
 		{"team mention skipped", "cc @vori/backend please", nil},
 		{"team and user", "cc @vori/backend and @alice", []string{"alice"}},
