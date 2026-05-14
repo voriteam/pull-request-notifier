@@ -15,6 +15,10 @@ type CommentContext struct {
 	PRNumber    int    `json:"p"`
 	CommentID   int64  `json:"c"`
 	CommentType string `json:"t"` // "pr_comment" | "review_comment" | "review"
+	// Commenter is the GitHub login of the original commenter. When set,
+	// replies submitted from Slack are auto-prefixed with `@<commenter>` so
+	// GitHub notifies them of the response.
+	Commenter string `json:"u,omitempty"`
 }
 
 func (c CommentContext) Encode() string {
@@ -166,7 +170,21 @@ func ReviewSubmittedBlocks(reviewerLogin, prTitle, prURL, state, body string) []
 
 // CommentBlocks builds the payload for a PR comment or review comment DM, with interactive buttons.
 func CommentBlocks(commenterLogin, prTitle, commentURL string, commentBody string, ctx CommentContext) []block {
-	header := fmt.Sprintf("*%s* commented on *<%s|%s>*:", commenterLogin, commentURL, prTitle)
+	return commentBlocks(
+		fmt.Sprintf("*%s* commented on *<%s|%s>*:", commenterLogin, commentURL, prTitle),
+		commentBody, ctx,
+	)
+}
+
+// MentionBlocks builds the payload for an @-mention DM with interactive buttons.
+func MentionBlocks(commenterLogin, prTitle, commentURL string, commentBody string, ctx CommentContext) []block {
+	return commentBlocks(
+		fmt.Sprintf("*%s* mentioned you on *<%s|%s>*:", commenterLogin, commentURL, prTitle),
+		commentBody, ctx,
+	)
+}
+
+func commentBlocks(header, commentBody string, ctx CommentContext) []block {
 	blockID := ctx.Encode()
 
 	return []block{

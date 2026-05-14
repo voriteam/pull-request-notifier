@@ -250,6 +250,10 @@ func (h *Handler) handleViewSubmission(w http.ResponseWriter, payload *interacti
 		return
 	}
 
+	// Auto-prefix the reply with @<original commenter> so GitHub notifies
+	// them — without it, the original sender has no signal a reply landed.
+	replyText = prefixMention(replyText, ctx.Commenter)
+
 	mapping, err := h.store.GetMappingBySlackUserID(payload.User.ID)
 	if err != nil || mapping == nil {
 		slog.Warn("no github mapping for slack user", "slack_user_id", payload.User.ID)
@@ -392,6 +396,30 @@ type viewValue struct {
 func jsonResponse(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
+}
+
+// prefixMention prepends "@<commenter> " to body unless commenter is empty
+// or body already starts with that exact mention (case-insensitive). A
+// trailing username character (e.g. "@alice2" when commenter="alice")
+// does not count as already-mentioned.
+func prefixMention(body, commenter string) string {
+	if commenter == "" {
+		return body
+	}
+	trimmed := strings.TrimLeft(body, " \t\r\n")
+	prefix := "@" + commenter
+	if len(trimmed) >= len(prefix) && strings.EqualFold(trimmed[:len(prefix)], prefix) {
+		// Require a non-username boundary after the prefix so "@alice2"
+		// doesn't satisfy commenter="alice".
+		if len(trimmed) == len(prefix) || !isUsernameChar(trimmed[len(prefix)]) {
+			return body
+		}
+	}
+	return prefix + " " + body
+}
+
+func isUsernameChar(b byte) bool {
+	return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9') || b == '-'
 }
 
 func abs(x int64) int64 {
