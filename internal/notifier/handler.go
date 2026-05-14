@@ -175,9 +175,10 @@ type pullRequestReviewEvent struct {
 }
 
 type review struct {
-	User  ghUser `json:"user"`
-	State string `json:"state"`
-	Body  string `json:"body"`
+	User    ghUser `json:"user"`
+	State   string `json:"state"`
+	Body    string `json:"body"`
+	HTMLURL string `json:"html_url"`
 }
 
 type pullRequestReviewCommentEvent struct {
@@ -416,7 +417,7 @@ func (h *Handler) handlePullRequestReview(ctx context.Context, body []byte) {
 
 	pr := evt.PullRequest
 	reviewerName := h.github.GetUserDisplayName(ctx, reviewer)
-	blocks := slack.ReviewSubmittedBlocks(reviewerName, pr.Title, pr.HTMLURL, state, evt.Review.Body)
+	blocks := slack.ReviewSubmittedBlocks(reviewerName, pr.Title, evt.Review.HTMLURL, state, evt.Review.Body)
 	var action string
 	switch state {
 	case "approved":
