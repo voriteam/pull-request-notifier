@@ -149,7 +149,7 @@ func formatUserList(users []string) string {
 }
 
 // ReviewSubmittedBlocks builds the payload for an approved or changes-requested review DM.
-func ReviewSubmittedBlocks(reviewerLogin, prTitle, prURL, state, body string) []block {
+func ReviewSubmittedBlocks(reviewerLogin, prTitle, reviewURL, state, body string) []block {
 	var icon, verb string
 	switch state {
 	case "approved":
@@ -160,7 +160,7 @@ func ReviewSubmittedBlocks(reviewerLogin, prTitle, prURL, state, body string) []
 		icon, verb = "💬", "reviewed"
 	}
 
-	header := fmt.Sprintf("%s *%s* %s *<%s|%s>*", icon, reviewerLogin, verb, prURL, prTitle)
+	header := fmt.Sprintf("%s *%s* %s *<%s|%s>*", icon, reviewerLogin, verb, reviewURL, prTitle)
 	blocks := []block{sectionBlock(header)}
 	if body != "" {
 		blocks = append(blocks, sectionBlock(fmt.Sprintf("> %s", truncate(body, 300))))
