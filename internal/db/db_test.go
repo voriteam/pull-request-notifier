@@ -197,3 +197,51 @@ func TestCommentMessages(t *testing.T) {
 		t.Errorf("expected nil for unknown ts, got %+v", cm2)
 	}
 }
+
+func TestReminderSends(t *testing.T) {
+	store := newTestStore(t)
+
+	// Initially not reminded.
+	sent, err := store.AlreadyReminded("U1", "2026-05-27", 9)
+	if err != nil {
+		t.Fatalf("already reminded: %v", err)
+	}
+	if sent {
+		t.Fatal("expected not reminded initially")
+	}
+
+	// Mark sent, then it should report reminded.
+	if err := store.MarkReminderSent("U1", "2026-05-27", 9); err != nil {
+		t.Fatalf("mark sent: %v", err)
+	}
+	sent, err = store.AlreadyReminded("U1", "2026-05-27", 9)
+	if err != nil {
+		t.Fatalf("already reminded: %v", err)
+	}
+	if !sent {
+		t.Fatal("expected reminded after mark")
+	}
+
+	// Marking the same slot again is a no-op (idempotent).
+	if err := store.MarkReminderSent("U1", "2026-05-27", 9); err != nil {
+		t.Fatalf("mark sent again: %v", err)
+	}
+
+	// A different hour, date, or user is a distinct slot.
+	for _, c := range []struct {
+		user, date string
+		hour       int
+	}{
+		{"U1", "2026-05-27", 13},
+		{"U1", "2026-05-28", 9},
+		{"U2", "2026-05-27", 9},
+	} {
+		sent, err := store.AlreadyReminded(c.user, c.date, c.hour)
+		if err != nil {
+			t.Fatalf("already reminded %+v: %v", c, err)
+		}
+		if sent {
+			t.Errorf("expected distinct slot %+v to be unreminded", c)
+		}
+	}
+}

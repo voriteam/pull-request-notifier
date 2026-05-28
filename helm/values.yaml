@@ -13,6 +13,11 @@ config:
   port: "8080"
   dbPath: "/data/pr-notifier.db"
   enableBotComments: false
+  # Daily reminders for PRs awaiting a user's review.
+  reminderEnabled: true
+  reminderHours: "9,13,15"
+  reminderWeekdaysOnly: true
+  reminderDefaultTZ: "America/Los_Angeles"
 
 # Provide credentials inline (for dev/testing).
 secrets:

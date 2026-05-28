@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"sync"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -18,15 +21,88 @@ var tracer = otel.Tracer("pull-request-notifier/slack")
 
 const slackAPIBase = "https://slack.com/api"
 
+type cachedTZ struct {
+	loc       *time.Location // nil when the timezone could not be determined
+	expiresAt time.Time
+}
+
 // Client makes authenticated calls to the Slack Web API.
 type Client struct {
 	token      string
 	httpClient *http.Client
+
+	tzMu    sync.Mutex
+	tzCache map[string]cachedTZ
 }
 
 // NewClient returns a new Slack API client.
 func NewClient(token string) *Client {
-	return &Client{token: token, httpClient: http.DefaultClient}
+	return &Client{token: token, httpClient: http.DefaultClient, tzCache: make(map[string]cachedTZ)}
+}
+
+// GetUserTimezone returns the user's timezone as a *time.Location, or nil if it
+// cannot be determined (e.g. the bot lacks the users:read scope). Results — including
+// nil — are cached for 6 hours to avoid hammering the Slack API.
+func (c *Client) GetUserTimezone(ctx context.Context, userID string) *time.Location {
+	c.tzMu.Lock()
+	if cached, ok := c.tzCache[userID]; ok && time.Now().Before(cached.expiresAt) {
+		c.tzMu.Unlock()
+		return cached.loc
+	}
+	c.tzMu.Unlock()
+
+	loc := c.fetchUserTimezone(ctx, userID)
+
+	c.tzMu.Lock()
+	c.tzCache[userID] = cachedTZ{loc: loc, expiresAt: time.Now().Add(6 * time.Hour)}
+	c.tzMu.Unlock()
+
+	return loc
+}
+
+func (c *Client) fetchUserTimezone(ctx context.Context, userID string) *time.Location {
+	ctx, span := tracer.Start(ctx, "slack.users.info", trace.WithAttributes(
+		attribute.String("slack.api.method", "users.info"),
+	))
+	defer span.End()
+
+	reqURL := slackAPIBase + "/users.info?user=" + url.QueryEscape(userID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		span.RecordError(err)
+		return nil
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		span.RecordError(err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+		User  struct {
+			TZ string `json:"tz"`
+		} `json:"user"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		span.RecordError(err)
+		return nil
+	}
+	if !result.OK || result.User.TZ == "" {
+		span.SetStatus(codes.Error, "users.info: "+result.Error)
+		return nil
+	}
+
+	loc, err := time.LoadLocation(result.User.TZ)
+	if err != nil {
+		span.RecordError(err)
+		return nil
+	}
+	return loc
 }
 
 // PostDM sends a DM to a Slack user by opening/reusing a conversation.

@@ -13,6 +13,7 @@ An open source Go service that delivers GitHub pull request activity as Slack DM
 - **Reply from Slack** → Opens a modal; submits to GitHub as a comment (threaded for inline review comments).
 - **React from Slack** → 👍 👀 🎉 quick buttons + 👎 😄 😕 ❤️ 🚀 overflow menu → posts a GitHub reaction.
 - **CI check failures** → DMs when a check run fails on a PR branch, with check name, repo, and branch.
+- **Review reminders** → Three times a day (9AM/1PM/3PM by default, weekdays only, in each user's Slack timezone) DMs a digest of open PRs still awaiting their review.
 - **Display names** → Shows full names (fetched from GitHub profiles) instead of usernames, with a 4-hour cache.
 - **Self-service account linking** → `/link-github` slash command initiates GitHub OAuth; no manual mapping needed.
 - **Admin dashboard** → GitHub OAuth-protected page at `/admin` showing all linked accounts.
@@ -54,6 +55,19 @@ Required environment variables:
 | `SLACK_BOT_TOKEN` | Slack bot token (`xoxb-...`) |
 | `SLACK_SIGNING_SECRET` | Slack app signing secret |
 | `DB_PATH` | SQLite file path (default: `/data/pr-notifier.db`) |
+
+Optional reminder settings (all have defaults; reminders are on by default):
+
+| Variable | Default | Description |
+|---|---|---|
+| `REMINDER_ENABLED` | `true` | Set to `false` to disable the daily review reminders |
+| `REMINDER_HOURS` | `9,13,15` | Comma-separated local hours (24h) to send reminders |
+| `REMINDER_WEEKDAYS_ONLY` | `true` | When `true`, skip Saturday and Sunday |
+| `REMINDER_DEFAULT_TZ` | `America/Los_Angeles` | IANA timezone used when a user's Slack timezone can't be read |
+
+Reminders read each user's timezone from Slack (`users.info`), which requires the
+`users:read` bot scope (see the Slack App setup below). Until the app is reinstalled
+with that scope, reminders fall back to `REMINDER_DEFAULT_TZ`.
 
 ## Kubernetes (Helm)
 
@@ -114,6 +128,8 @@ Install the app on your organization and note the **Installation ID** (visible i
 ### 2. Slack App
 
 Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From a manifest**. Paste the contents of [`slack-app-manifest.yaml`](slack-app-manifest.yaml), replacing `YOUR_DOMAIN` with your public URL. Install the app to your workspace.
+
+The manifest includes the `users:read` scope, used to read each user's timezone for review reminders. If you're upgrading an existing app, add this scope and **reinstall** the app so the new permission takes effect.
 
 Note the **Bot Token** (`xoxb-...`) and **Signing Secret** from the app settings — these become `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET`.
 

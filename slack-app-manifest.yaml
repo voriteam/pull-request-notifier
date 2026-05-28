@@ -23,6 +23,7 @@ oauth_config:
       - chat:write
       - commands
       - im:write
+      - users:read
 
 settings:
   event_subscriptions:

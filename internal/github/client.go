@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -252,6 +253,54 @@ func (c *Client) GetPRActivity(ctx context.Context, repo string, prNumber int, i
 	}
 
 	return activity, nil
+}
+
+// AssignedPR is an open pull request awaiting a user's review.
+type AssignedPR struct {
+	Repo   string // "owner/repo"
+	Number int
+	Title  string
+	URL    string
+}
+
+// ListReviewRequestedPRs returns open PRs in the installation's org where the
+// given user is still a requested reviewer (i.e. they have not yet reviewed).
+func (c *Client) ListReviewRequestedPRs(ctx context.Context, username string) ([]AssignedPR, error) {
+	token, err := c.GetInstallationToken()
+	if err != nil {
+		return nil, fmt.Errorf("get installation token: %w", err)
+	}
+
+	org, err := c.getInstallationOrg(token)
+	if err != nil {
+		return nil, fmt.Errorf("get installation org: %w", err)
+	}
+
+	query := fmt.Sprintf("is:open is:pr archived:false org:%s review-requested:%s", org, username)
+	path := "/search/issues?per_page=100&q=" + url.QueryEscape(query)
+
+	var result struct {
+		Items []struct {
+			Number        int    `json:"number"`
+			Title         string `json:"title"`
+			HTMLURL       string `json:"html_url"`
+			RepositoryURL string `json:"repository_url"`
+		} `json:"items"`
+	}
+	if err := c.get(ctx, token, path, &result); err != nil {
+		return nil, err
+	}
+
+	prs := make([]AssignedPR, 0, len(result.Items))
+	for _, item := range result.Items {
+		prs = append(prs, AssignedPR{
+			Repo:   strings.TrimPrefix(item.RepositoryURL, apiBase+"/repos/"),
+			Number: item.Number,
+			Title:  item.Title,
+			URL:    item.HTMLURL,
+		})
+	}
+	return prs, nil
 }
 
 // OAuthToken holds the tokens returned by GitHub's OAuth token endpoint.
