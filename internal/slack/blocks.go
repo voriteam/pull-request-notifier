@@ -275,6 +275,24 @@ func LinkGitHubMessage(oauthURL string) []block {
 	}
 }
 
+// ReminderBlocks builds the digest DM reminding a user of PRs awaiting their review.
+func ReminderBlocks(prs []github.AssignedPR) []block {
+	noun := "PR"
+	if len(prs) != 1 {
+		noun = "PRs"
+	}
+	blocks := []block{
+		sectionBlock(fmt.Sprintf("🔔 You have *%d* %s awaiting your review:", len(prs), noun)),
+	}
+	for _, pr := range prs {
+		blocks = append(blocks, sectionBlock(fmt.Sprintf("*<%s|%s>*", pr.URL, pr.Title)))
+		if pr.Repo != "" {
+			blocks = append(blocks, contextBlock(fmt.Sprintf("%s #%d", pr.Repo, pr.Number)))
+		}
+	}
+	return blocks
+}
+
 // CheckRunFailedBlocks builds the payload for a failed CI check DM.
 func CheckRunFailedBlocks(checkName, checkURL, repoName, branch string) []block {
 	return []block{

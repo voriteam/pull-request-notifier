@@ -115,6 +115,14 @@ func (s *Store) migrate() error {
 			created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (repo, pr_number)
 		);
+
+		CREATE TABLE IF NOT EXISTS reminder_sends (
+			slack_user_id TEXT NOT NULL,
+			local_date    TEXT NOT NULL,
+			hour          INTEGER NOT NULL,
+			created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (slack_user_id, local_date, hour)
+		);
 	`)
 	return err
 }
@@ -362,4 +370,36 @@ func (s *Store) GetCommentMessage(messageTS string) (*CommentMessage, error) {
 		return nil, err
 	}
 	return &m, nil
+}
+
+// --- Reminder Sends ---
+
+// AlreadyReminded reports whether a reminder has already been recorded for the
+// given Slack user, local date (YYYY-MM-DD in the user's timezone), and hour.
+func (s *Store) AlreadyReminded(slackUserID, localDate string, hour int) (bool, error) {
+	var one int
+	err := s.db.QueryRow(
+		`SELECT 1 FROM reminder_sends WHERE slack_user_id = ? AND local_date = ? AND hour = ?`,
+		slackUserID, localDate, hour,
+	).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// MarkReminderSent records that a reminder was sent for the given slot. It is
+// idempotent (INSERT OR IGNORE) and opportunistically prunes rows older than 7 days.
+func (s *Store) MarkReminderSent(slackUserID, localDate string, hour int) error {
+	if _, err := s.db.Exec(
+		`INSERT OR IGNORE INTO reminder_sends (slack_user_id, local_date, hour) VALUES (?, ?, ?)`,
+		slackUserID, localDate, hour,
+	); err != nil {
+		return err
+	}
+	_, _ = s.db.Exec(`DELETE FROM reminder_sends WHERE created_at < datetime('now', '-7 days')`)
+	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/voriteam/pull-request-notifier/internal/admin"
 	"github.com/voriteam/pull-request-notifier/internal/config"
@@ -13,6 +14,7 @@ import (
 	"github.com/voriteam/pull-request-notifier/internal/github"
 	"github.com/voriteam/pull-request-notifier/internal/notifier"
 	"github.com/voriteam/pull-request-notifier/internal/oauth"
+	"github.com/voriteam/pull-request-notifier/internal/reminder"
 	"github.com/voriteam/pull-request-notifier/internal/slack"
 	"github.com/voriteam/pull-request-notifier/internal/telemetry"
 )
@@ -43,6 +45,16 @@ func main() {
 		os.Exit(1)
 	}
 	slackClient := slack.NewClient(cfg.SlackBotToken)
+
+	if cfg.ReminderEnabled {
+		defaultTZ, err := time.LoadLocation(cfg.ReminderDefaultTZ)
+		if err != nil {
+			slog.Error("invalid REMINDER_DEFAULT_TZ, falling back to UTC", "value", cfg.ReminderDefaultTZ, "err", err)
+			defaultTZ = time.UTC
+		}
+		scheduler := reminder.New(store, ghClient, slackClient, cfg.ReminderHours, cfg.ReminderWeekdaysOnly, defaultTZ)
+		go scheduler.Start(context.Background())
+	}
 
 	adminHandler := admin.NewHandler(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.BaseURL, cfg.GitHubWebhookSecret, cfg.EnableBotComments, store, ghClient)
 	oauthHandler := oauth.NewHandler(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.BaseURL, store, ghClient, slackClient, adminHandler)

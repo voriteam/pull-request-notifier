@@ -43,6 +43,14 @@ spec:
               value: {{ .Values.config.dbPath | quote }}
             - name: ENABLE_BOT_COMMENTS
               value: {{ .Values.config.enableBotComments | quote }}
+            - name: REMINDER_ENABLED
+              value: {{ .Values.config.reminderEnabled | quote }}
+            - name: REMINDER_HOURS
+              value: {{ .Values.config.reminderHours | quote }}
+            - name: REMINDER_WEEKDAYS_ONLY
+              value: {{ .Values.config.reminderWeekdaysOnly | quote }}
+            - name: REMINDER_DEFAULT_TZ
+              value: {{ .Values.config.reminderDefaultTZ | quote }}
             {{- $secretName := default (printf "%s-secrets" .Release.Name) .Values.existingSecret }}
             - name: GITHUB_CLIENT_ID
               valueFrom:
