@@ -189,10 +189,19 @@ type pullRequestReviewCommentEvent struct {
 }
 
 type issueCommentEvent struct {
-	Action     string  `json:"action"`
-	Comment    comment `json:"comment"`
-	Issue      issue   `json:"issue"`
-	Repository ghRepo  `json:"repository"`
+	Action     string          `json:"action"`
+	Changes    *commentChanges `json:"changes"`
+	Comment    comment         `json:"comment"`
+	Issue      issue           `json:"issue"`
+	Repository ghRepo          `json:"repository"`
+}
+
+// commentChanges holds the pre-edit values GitHub sends on an "edited"
+// action. Body is non-nil only when the comment body actually changed.
+type commentChanges struct {
+	Body *struct {
+		From string `json:"from"`
+	} `json:"body"`
 }
 
 type issue struct {
@@ -497,7 +506,7 @@ func (h *Handler) handleIssueComment(ctx context.Context, body []byte) {
 		return
 	}
 
-	if evt.Action != "created" {
+	if evt.Action != "created" && evt.Action != "edited" {
 		return
 	}
 
@@ -534,6 +543,20 @@ func (h *Handler) handleIssueComment(ctx context.Context, body []byte) {
 	}
 
 	notified := map[string]bool{strings.ToLower(commenter): true}
+
+	// On an edit, only notify mentions that are new in this revision. Seed the
+	// notified set with everyone already @-mentioned in the pre-edit body so
+	// notifyMentions skips them, and don't re-send the PR-author comment DM.
+	if evt.Action == "edited" {
+		if evt.Changes == nil || evt.Changes.Body == nil {
+			return // body unchanged; no new mentions
+		}
+		for _, login := range extractMentions(evt.Changes.Body.From) {
+			notified[strings.ToLower(login)] = true
+		}
+		h.notifyMentions(ctx, evt.Comment.Body, commenterName, evt.Issue.Title, evt.Comment.HTMLURL, commentCtx, notified)
+		return
+	}
 
 	// Notify the PR author (skip self-comments).
 	if commenter != prAuthor {
