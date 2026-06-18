@@ -264,7 +264,9 @@ type AssignedPR struct {
 }
 
 // ListReviewRequestedPRs returns open PRs in the installation's org where the
-// given user is still a requested reviewer (i.e. they have not yet reviewed).
+// given user is directly requested as a reviewer (i.e. an individual review
+// request they have not yet acted on). PRs reachable only because a team the
+// user belongs to is requested are intentionally excluded.
 func (c *Client) ListReviewRequestedPRs(ctx context.Context, username string) ([]AssignedPR, error) {
 	token, err := c.GetInstallationToken()
 	if err != nil {
@@ -276,7 +278,7 @@ func (c *Client) ListReviewRequestedPRs(ctx context.Context, username string) ([
 		return nil, fmt.Errorf("get installation org: %w", err)
 	}
 
-	query := fmt.Sprintf("is:open is:pr archived:false org:%s review-requested:%s", org, username)
+	query := fmt.Sprintf("is:open is:pr archived:false org:%s user-review-requested:%s", org, username)
 	path := "/search/issues?per_page=100&q=" + url.QueryEscape(query)
 
 	var result struct {
