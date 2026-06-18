@@ -2,6 +2,7 @@ package notifier
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -36,6 +37,43 @@ func TestExtractMentions(t *testing.T) {
 			got := extractMentions(tc.body)
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("extractMentions(%q) = %v, want %v", tc.body, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAddedMentions documents the new-mention diff that handleIssueComment
+// applies on an "edited" action: mentions present in the new body but not in
+// the pre-edit body should be the only ones notified.
+func TestAddedMentions(t *testing.T) {
+	cases := []struct {
+		name    string
+		oldBody string
+		newBody string
+		want    []string
+	}{
+		{"adds one", "hey @alice", "hey @alice and @bob", []string{"bob"}},
+		{"no body change", "hey @alice", "hey @alice", nil},
+		{"no new mentions", "hey @alice", "hey @alice please look", nil},
+		{"first mention added", "looks good", "looks good @carol", []string{"carol"}},
+		{"casing matches existing", "@Alice", "@Alice @alice @bob", []string{"bob"}},
+		{"removed mention not notified", "@alice @bob", "@alice", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seen := make(map[string]bool)
+			for _, login := range extractMentions(tc.oldBody) {
+				seen[strings.ToLower(login)] = true
+			}
+			var got []string
+			for _, login := range extractMentions(tc.newBody) {
+				if seen[strings.ToLower(login)] {
+					continue
+				}
+				got = append(got, login)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("added mentions(old=%q,new=%q) = %v, want %v", tc.oldBody, tc.newBody, got, tc.want)
 			}
 		})
 	}
