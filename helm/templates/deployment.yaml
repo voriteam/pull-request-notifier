@@ -51,6 +51,22 @@ spec:
               value: {{ .Values.config.reminderWeekdaysOnly | quote }}
             - name: REMINDER_DEFAULT_TZ
               value: {{ .Values.config.reminderDefaultTZ | quote }}
+            - name: ROTATION_ENABLED
+              value: {{ .Values.config.rotationEnabled | quote }}
+            - name: ROTATION_CHANNEL_ID
+              value: {{ .Values.config.rotationChannelID | quote }}
+            - name: ROTATION_MEMBERS
+              value: {{ .Values.config.rotationMembers | quote }}
+            - name: ROTATION_START_DATE
+              value: {{ .Values.config.rotationStartDate | quote }}
+            - name: ROTATION_WEEKDAY
+              value: {{ .Values.config.rotationWeekday | quote }}
+            - name: ROTATION_HOUR
+              value: {{ .Values.config.rotationHour | quote }}
+            - name: ROTATION_TZ
+              value: {{ .Values.config.rotationTZ | quote }}
+            - name: ROTATION_MESSAGE
+              value: {{ .Values.config.rotationMessage | quote }}
             {{- $secretName := default (printf "%s-secrets" .Release.Name) .Values.existingSecret }}
             - name: GITHUB_CLIENT_ID
               valueFrom:

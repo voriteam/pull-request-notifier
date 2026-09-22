@@ -14,6 +14,7 @@ An open source Go service that delivers GitHub pull request activity as Slack DM
 - **React from Slack** → 👍 👀 🎉 quick buttons + 👎 😄 😕 ❤️ 🚀 overflow menu → posts a GitHub reaction.
 - **CI check failures** → DMs when a check run fails on a PR branch, with check name, repo, and branch.
 - **Review reminders** → Three times a day (9AM/1PM/3PM by default, weekdays only, in each user's Slack timezone) DMs a digest of open PRs still awaiting their review.
+- **Weekly rotation announcement** → Optionally posts a "this week's owner" message to a Slack channel on a set day and hour (e.g. Mondays at 9AM PT), cycling through a list of people.
 - **Display names** → Shows full names (fetched from GitHub profiles) instead of usernames, with a 4-hour cache.
 - **Self-service account linking** → `/link-github` slash command initiates GitHub OAuth; no manual mapping needed.
 - **Admin dashboard** → GitHub OAuth-protected page at `/admin` showing all linked accounts.
@@ -68,6 +69,27 @@ Optional reminder settings (all have defaults; reminders are on by default):
 Reminders read each user's timezone from Slack (`users.info`), which requires the
 `users:read` bot scope (see the Slack App setup below). Until the app is reinstalled
 with that scope, reminders fall back to `REMINDER_DEFAULT_TZ`.
+
+Optional weekly rotation announcement (off by default):
+
+| Variable | Default | Description |
+|---|---|---|
+| `ROTATION_ENABLED` | `false` | Set to `true` to post the weekly rotation message |
+| `ROTATION_CHANNEL_ID` | | Slack channel ID to post in (e.g. `C0AE8BBR2BC`). Invite the bot to the channel first — private channels require it |
+| `ROTATION_MEMBERS` | | Comma-separated `SLACK_USER_ID:Name` pairs in rotation order (e.g. `U111:Jada,U222:Kayla,U333:Taylor`) |
+| `ROTATION_START_DATE` | | A date (`YYYY-MM-DD`) in a week where the first member is the owner |
+| `ROTATION_WEEKDAY` | `Monday` | Day of the week to post |
+| `ROTATION_HOUR` | `9` | Local hour (24h) to post |
+| `ROTATION_TZ` | `America/Los_Angeles` | IANA timezone for the day and hour above |
+| `ROTATION_MESSAGE` | `_This week's owner:_` | Text shown before the owner's @-mention |
+
+The posted message looks like:
+
+```
+:iphone: _This week's iOS release notes & testing owner:_ @Jada
+
+Rotation: Jada → Kayla → Taylor → (repeat)
+```
 
 ## Kubernetes (Helm)
 

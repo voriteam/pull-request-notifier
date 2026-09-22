@@ -134,6 +134,29 @@ func (c *Client) PostDM(ctx context.Context, userID string, blocks []Block, fall
 	return result.TS, nil
 }
 
+// PostChannelMessage posts a plain mrkdwn text message to a channel. The bot
+// must be a member of the channel (required for private channels).
+// Returns the message timestamp (ts) on success.
+func (c *Client) PostChannelMessage(ctx context.Context, channelID, text string) (string, error) {
+	payload := map[string]any{
+		"channel": channelID,
+		"text":    text,
+	}
+
+	var result struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+		TS    string `json:"ts"`
+	}
+	if err := c.post(ctx, "chat.postMessage", payload, &result); err != nil {
+		return "", err
+	}
+	if !result.OK {
+		return "", fmt.Errorf("chat.postMessage: %s", result.Error)
+	}
+	return result.TS, nil
+}
+
 // UpdateDM edits an existing DM message by opening the conversation first.
 func (c *Client) UpdateDM(ctx context.Context, userID, ts string, blocks []Block, fallbackText string) error {
 	channelID, err := c.openConversation(ctx, userID)
