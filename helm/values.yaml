@@ -18,6 +18,18 @@ config:
   reminderHours: "9,13,15"
   reminderWeekdaysOnly: true
   reminderDefaultTZ: "America/Los_Angeles"
+  # Weekly "who's on duty" announcement posted to a Slack channel.
+  # The bot must be invited to the channel (required for private channels).
+  rotationEnabled: false
+  rotationChannelID: ""
+  # Comma-separated SLACK_USER_ID:Name pairs, in rotation order.
+  rotationMembers: ""
+  # A date (YYYY-MM-DD) in a week where the first member is the owner.
+  rotationStartDate: ""
+  rotationWeekday: "Monday"
+  rotationHour: "9"
+  rotationTZ: "America/Los_Angeles"
+  rotationMessage: "_This week's owner:_"
 
 # Provide credentials inline (for dev/testing).
 secrets:

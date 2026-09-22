@@ -27,6 +27,16 @@ type Config struct {
 	ReminderHours        []int
 	ReminderWeekdaysOnly bool
 	ReminderDefaultTZ    string
+
+	// Weekly channel rotation announcement.
+	RotationEnabled   bool
+	RotationChannelID string
+	RotationMembers   string
+	RotationStartDate string
+	RotationWeekday   string
+	RotationHour      int
+	RotationTZ        string
+	RotationMessage   string
 }
 
 // Load reads configuration from environment variables. Panics on missing required values.
@@ -48,6 +58,14 @@ func Load() *Config {
 		ReminderHours:        getIntListEnv("REMINDER_HOURS", []int{9, 13, 15}),
 		ReminderWeekdaysOnly: getBoolEnv("REMINDER_WEEKDAYS_ONLY", true),
 		ReminderDefaultTZ:    getEnv("REMINDER_DEFAULT_TZ", "America/Los_Angeles"),
+		RotationEnabled:      getBoolEnv("ROTATION_ENABLED", false),
+		RotationChannelID:    getEnv("ROTATION_CHANNEL_ID", ""),
+		RotationMembers:      getEnv("ROTATION_MEMBERS", ""),
+		RotationStartDate:    getEnv("ROTATION_START_DATE", ""),
+		RotationWeekday:      getEnv("ROTATION_WEEKDAY", "Monday"),
+		RotationHour:         getIntEnv("ROTATION_HOUR", 9),
+		RotationTZ:           getEnv("ROTATION_TZ", "America/Los_Angeles"),
+		RotationMessage:      getEnv("ROTATION_MESSAGE", "_This week's owner:_"),
 	}
 }
 
@@ -64,6 +82,14 @@ func getBoolEnv(key string, fallback bool) bool {
 		return fallback
 	}
 	return strings.EqualFold(v, "true") || v == "1"
+}
+
+func getIntEnv(key string, fallback int) int {
+	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key)))
+	if err != nil {
+		return fallback
+	}
+	return n
 }
 
 // getIntListEnv parses a comma-separated list of integers (e.g. "9,13,15").

@@ -123,6 +123,13 @@ func (s *Store) migrate() error {
 			created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (slack_user_id, local_date, hour)
 		);
+
+		CREATE TABLE IF NOT EXISTS rotation_posts (
+			channel_id TEXT NOT NULL,
+			local_date TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (channel_id, local_date)
+		);
 	`)
 	return err
 }
@@ -401,5 +408,37 @@ func (s *Store) MarkReminderSent(slackUserID, localDate string, hour int) error 
 		return err
 	}
 	_, _ = s.db.Exec(`DELETE FROM reminder_sends WHERE created_at < datetime('now', '-7 days')`)
+	return nil
+}
+
+// --- Rotation Posts ---
+
+// AlreadyPostedRotation reports whether the rotation announcement has already
+// been posted to the channel on the given local date (YYYY-MM-DD).
+func (s *Store) AlreadyPostedRotation(channelID, localDate string) (bool, error) {
+	var one int
+	err := s.db.QueryRow(
+		`SELECT 1 FROM rotation_posts WHERE channel_id = ? AND local_date = ?`,
+		channelID, localDate,
+	).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// MarkRotationPosted records that the rotation announcement was posted. It is
+// idempotent (INSERT OR IGNORE) and opportunistically prunes rows older than 30 days.
+func (s *Store) MarkRotationPosted(channelID, localDate string) error {
+	if _, err := s.db.Exec(
+		`INSERT OR IGNORE INTO rotation_posts (channel_id, local_date) VALUES (?, ?)`,
+		channelID, localDate,
+	); err != nil {
+		return err
+	}
+	_, _ = s.db.Exec(`DELETE FROM rotation_posts WHERE created_at < datetime('now', '-30 days')`)
 	return nil
 }

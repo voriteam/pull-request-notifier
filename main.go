@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/voriteam/pull-request-notifier/internal/admin"
@@ -15,6 +16,7 @@ import (
 	"github.com/voriteam/pull-request-notifier/internal/notifier"
 	"github.com/voriteam/pull-request-notifier/internal/oauth"
 	"github.com/voriteam/pull-request-notifier/internal/reminder"
+	"github.com/voriteam/pull-request-notifier/internal/rotation"
 	"github.com/voriteam/pull-request-notifier/internal/slack"
 	"github.com/voriteam/pull-request-notifier/internal/telemetry"
 )
@@ -56,6 +58,10 @@ func main() {
 		go scheduler.Start(context.Background())
 	}
 
+	if cfg.RotationEnabled {
+		startRotation(cfg, store, slackClient)
+	}
+
 	adminHandler := admin.NewHandler(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.BaseURL, cfg.GitHubWebhookSecret, cfg.EnableBotComments, store, ghClient)
 	oauthHandler := oauth.NewHandler(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.BaseURL, store, ghClient, slackClient, adminHandler)
 	slackHandler := slack.NewHandler(cfg.SlackSigningSecret, store, ghClient, slackClient, cfg.BaseURL, cfg.GitHubClientID, cfg.GitHubClientSecret)
@@ -89,4 +95,47 @@ func main() {
 		slog.Error("server exited", "err", err)
 		os.Exit(1)
 	}
+}
+
+// startRotation starts the weekly channel rotation announcement. Invalid config
+// is logged and the rotation is skipped rather than taking down the service.
+func startRotation(cfg *config.Config, store *db.Store, slackClient *slack.Client) {
+	loc, err := time.LoadLocation(cfg.RotationTZ)
+	if err != nil {
+		slog.Error("rotation disabled: invalid ROTATION_TZ", "value", cfg.RotationTZ, "err", err)
+		return
+	}
+	weekday, err := parseWeekday(cfg.RotationWeekday)
+	if err != nil {
+		slog.Error("rotation disabled: invalid ROTATION_WEEKDAY", "err", err)
+		return
+	}
+	members, err := rotation.ParseMembers(cfg.RotationMembers)
+	if err != nil {
+		slog.Error("rotation disabled: invalid ROTATION_MEMBERS", "err", err)
+		return
+	}
+	scheduler, err := rotation.New(rotation.Config{
+		ChannelID: cfg.RotationChannelID,
+		Members:   members,
+		StartDate: cfg.RotationStartDate,
+		Weekday:   weekday,
+		Hour:      cfg.RotationHour,
+		Location:  loc,
+		Message:   cfg.RotationMessage,
+	}, store, slackClient)
+	if err != nil {
+		slog.Error("rotation disabled: invalid config", "err", err)
+		return
+	}
+	go scheduler.Start(context.Background())
+}
+
+func parseWeekday(s string) (time.Weekday, error) {
+	for d := time.Sunday; d <= time.Saturday; d++ {
+		if strings.EqualFold(s, d.String()) {
+			return d, nil
+		}
+	}
+	return 0, fmt.Errorf("unknown weekday %q", s)
 }
