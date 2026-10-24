@@ -150,7 +150,9 @@ Requires `gcc` for SQLite (CGO). On macOS: `xcode-select --install`. On Ubuntu/D
 
 ## Data & backups
 
-All state lives in a single SQLite file. The data is low-stakes (only account mappings and message timestamps for in-place edits — no message content). For production, mount the `/data` volume on persistent storage. If you want continuous replication, [Litestream](https://litestream.io) works well as a sidecar.
+All state lives in a single SQLite file. The data is low-stakes (only account mappings and message timestamps for in-place edits — no message content). For production, either mount the `/data` volume on persistent storage or let the chart replicate the file with [Litestream](https://litestream.io).
+
+With `litestream.enabled=true` and `litestream.replicaURL` set (for example `gs://bucket/path`), an init container restores the database from the replica when the pod starts, and a sidecar streams every change back to it. Set `persistence.enabled=false` to drop the persistent disk entirely, so a replacement pod can start on any node. The pod's service account needs read and write access to the bucket. Writes made in the last `litestream.syncInterval` can be lost if the node dies without a clean shutdown. Run a single replica: two pods replicating to the same URL corrupt it.
 
 ## Observability
 

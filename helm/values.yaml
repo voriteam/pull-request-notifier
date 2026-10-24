@@ -40,6 +40,27 @@ persistence:
   accessModes:
     - ReadWriteOnce
 
+# Streams the SQLite database to object storage and restores it on start, so
+# the pod can run without a persistent disk (persistence.enabled: false).
+# Run one replica only: two pods replicating to one URL corrupt the replica.
+litestream:
+  enabled: false
+  image: litestream/litestream:0.5.17
+  # e.g. gs://bucket/path or s3://bucket/path
+  replicaURL: ""
+  # Upper bound on writes lost when the node dies without a clean shutdown.
+  syncInterval: 10s
+  # Must match the app image's user so both containers can write the WAL.
+  runAsUser: 100
+  runAsGroup: 100
+  emptyDirSizeLimit: 1Gi
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 64Mi
+
 gateway:
   enabled: false
   hostname: ""

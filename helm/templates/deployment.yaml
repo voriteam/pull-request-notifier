@@ -18,10 +18,47 @@ spec:
       labels:
         app.kubernetes.io/name: {{ include "pull-request-notifier.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
+      {{- if .Values.litestream.enabled }}
+      annotations:
+        checksum/litestream: {{ include "pull-request-notifier.litestreamConfig" . | sha256sum }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "pull-request-notifier.serviceAccountName" . }}
       securityContext:
         fsGroup: 100
+      {{- if .Values.litestream.enabled }}
+      {{- $litestreamSecurityContext := dict "runAsUser" .Values.litestream.runAsUser "runAsGroup" .Values.litestream.runAsGroup "runAsNonRoot" true "allowPrivilegeEscalation" false }}
+      {{- $litestreamMounts := list (dict "name" "data" "mountPath" "/data") (dict "name" "litestream-config" "mountPath" "/etc/litestream" "readOnly" true) }}
+      initContainers:
+        - name: litestream-restore
+          image: {{ .Values.litestream.image | quote }}
+          args:
+            - restore
+            - -config
+            - /etc/litestream/litestream.yml
+            - -if-db-not-exists
+            - -if-replica-exists
+            - {{ .Values.config.dbPath | quote }}
+          securityContext:
+            {{- toYaml $litestreamSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.litestream.resources | nindent 12 }}
+          volumeMounts:
+            {{- toYaml $litestreamMounts | nindent 12 }}
+        - name: litestream
+          image: {{ .Values.litestream.image | quote }}
+          restartPolicy: Always
+          args:
+            - replicate
+            - -config
+            - /etc/litestream/litestream.yml
+          securityContext:
+            {{- toYaml $litestreamSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.litestream.resources | nindent 12 }}
+          volumeMounts:
+            {{- toYaml $litestreamMounts | nindent 12 }}
+      {{- end }}
       containers:
         - name: {{ include "pull-request-notifier.containerName" . }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -118,14 +155,24 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- if .Values.persistence.enabled }}
+          {{- if or .Values.persistence.enabled .Values.litestream.enabled }}
           volumeMounts:
             - name: data
               mountPath: /data
           {{- end }}
-      {{- if .Values.persistence.enabled }}
+      {{- if or .Values.persistence.enabled .Values.litestream.enabled }}
       volumes:
         - name: data
+          {{- if .Values.persistence.enabled }}
           persistentVolumeClaim:
             claimName: {{ .Release.Name }}-data
+          {{- else }}
+          emptyDir:
+            sizeLimit: {{ .Values.litestream.emptyDirSizeLimit }}
+          {{- end }}
+        {{- if .Values.litestream.enabled }}
+        - name: litestream-config
+          configMap:
+            name: {{ .Release.Name }}-litestream
+        {{- end }}
       {{- end }}

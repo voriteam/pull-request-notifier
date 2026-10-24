@@ -1,0 +1,12 @@
+{{- if .Values.litestream.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-litestream
+  labels:
+    app.kubernetes.io/name: {{ include "pull-request-notifier.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  litestream.yml: |
+    {{- include "pull-request-notifier.litestreamConfig" . | nindent 4 }}
+{{- end }}
