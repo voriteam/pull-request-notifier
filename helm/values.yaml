@@ -71,6 +71,8 @@ gateway:
 serviceAccount:
   create: true
   name: ""
+  # e.g. iam.gke.io/gcp-service-account for Litestream's bucket access on GKE
+  annotations: {}
 
 otel:
   enabled: false
