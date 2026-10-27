@@ -18,10 +18,12 @@ spec:
       labels:
         app.kubernetes.io/name: {{ include "pull-request-notifier.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
-      {{- if .Values.litestream.enabled }}
       annotations:
+        # One replica, so any eviction is an outage until the new pod is reachable.
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+        {{- if .Values.litestream.enabled }}
         checksum/litestream: {{ include "pull-request-notifier.litestreamConfig" . | sha256sum }}
-      {{- end }}
+        {{- end }}
     spec:
       serviceAccountName: {{ include "pull-request-notifier.serviceAccountName" . }}
       securityContext:
