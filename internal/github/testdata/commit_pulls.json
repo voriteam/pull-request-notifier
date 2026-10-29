@@ -1,0 +1,24 @@
+[
+  {
+    "url": "https://api.github.com/repos/voriteam/backend/pulls/4099",
+    "html_url": "https://github.com/voriteam/backend/pull/4099",
+    "number": 4099,
+    "state": "closed",
+    "title": "Retry webhook delivery",
+    "user": {"login": "alice", "type": "User"},
+    "merged_at": "2026-10-28T18:15:03Z",
+    "head": {"ref": "alice/vor-870-retry", "sha": "ddd444"},
+    "base": {"ref": "master", "sha": "bbb333"}
+  },
+  {
+    "url": "https://api.github.com/repos/voriteam/backend/pulls/4050",
+    "html_url": "https://github.com/voriteam/backend/pull/4050",
+    "number": 4050,
+    "state": "open",
+    "title": "Stacked branch",
+    "user": {"login": "bob", "type": "User"},
+    "merged_at": null,
+    "head": {"ref": "bob/stacked", "sha": "fff666"},
+    "base": {"ref": "alice/vor-870-retry", "sha": "ddd444"}
+  }
+]

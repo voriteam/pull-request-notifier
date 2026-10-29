@@ -1,6 +1,14 @@
 package slack
 
-import "testing"
+import (
+	"encoding/json"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/voriteam/pull-request-notifier/internal/db"
+)
 
 func TestPrefixMention(t *testing.T) {
 	cases := []struct {
@@ -26,5 +34,53 @@ func TestPrefixMention(t *testing.T) {
 				t.Errorf("prefixMention(%q, %q) = %q, want %q", tc.body, tc.commenter, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestDeployNotificationsCommand(t *testing.T) {
+	store, err := db.New(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	h := &Handler{store: store}
+
+	run := func(user, arg string) string {
+		w := httptest.NewRecorder()
+		h.handleDeployNotifications(w, user, arg)
+		var resp struct{ Text string }
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp.Text
+	}
+
+	if got := run("U1", "on"); !strings.Contains(got, "/link-github") {
+		t.Errorf("unlinked user: got %q", got)
+	}
+
+	if err := store.UpsertUserMapping("octocat", "U1", "", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct{ arg, want string }{
+		{"status", "*off*"},
+		{"on", "*on*"},
+		{"", "*on*"},
+		{"OFF", "*off*"},
+		{"bogus", "Usage"},
+	} {
+		if got := run("U1", step.arg); !strings.Contains(got, step.want) {
+			t.Errorf("%q: got %q, want %q", step.arg, got, step.want)
+		}
+	}
+
+	if err := store.SetNotifyDeploys("U1", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertUserMapping("octocat", "U1", "new-token", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := store.GetDeployNotifySlackID("octocat"); got != "U1" {
+		t.Errorf("opt-in lost on relink: got %q", got)
 	}
 }

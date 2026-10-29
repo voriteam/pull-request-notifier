@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/voriteam/pull-request-notifier/internal/github"
 )
@@ -299,6 +300,21 @@ func CheckRunFailedBlocks(checkName, checkURL, repoName, branch string) []block 
 		sectionBlock(fmt.Sprintf("❌ Check *<%s|%s>* failed", checkURL, checkName)),
 		contextBlock(fmt.Sprintf("Repository: *%s*    Branch: *%s*", repoName, branch)),
 	}
+}
+
+// DeployedBlocks builds the DM telling an author their PR is live in an environment.
+func DeployedBlocks(repoName string, prNumber int, prTitle, prURL, environment string, linearKeys []string) []block {
+	blocks := []block{
+		sectionBlock(fmt.Sprintf("🚀 <%s|%s#%d %s> is live in %s", prURL, repoName, prNumber, prTitle, environment)),
+	}
+	if len(linearKeys) > 0 {
+		links := make([]string, len(linearKeys))
+		for i, key := range linearKeys {
+			links[i] = fmt.Sprintf("<https://linear.app/vori/issue/%s|%s>", key, key)
+		}
+		blocks = append(blocks, contextBlock(strings.Join(links, "  ")))
+	}
+	return blocks
 }
 
 // truncate shortens a string and appends "…" if it exceeds max runes.

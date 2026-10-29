@@ -1,0 +1,11 @@
+{
+  "url": "https://api.github.com/repos/voriteam/backend/pulls/4101",
+  "html_url": "https://github.com/voriteam/backend/pull/4101",
+  "number": 4101,
+  "state": "closed",
+  "title": "Fixed invoice rounding",
+  "user": {"login": "alice", "type": "User"},
+  "merged_at": "2026-10-28T17:02:11Z",
+  "head": {"ref": "alice/vor-881-invoice-rounding", "sha": "eee555"},
+  "base": {"ref": "master", "sha": "aaa111"}
+}

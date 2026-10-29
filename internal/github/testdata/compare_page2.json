@@ -1,0 +1,19 @@
+{
+  "url": "https://api.github.com/repos/voriteam/backend/compare/aaa111...ccc333",
+  "status": "ahead",
+  "ahead_by": 3,
+  "behind_by": 0,
+  "total_commits": 3,
+  "commits": [
+    {
+      "sha": "ccc333",
+      "commit": {
+        "author": {"name": "Alice", "email": "alice@example.com", "date": "2026-10-28T18:15:03Z"},
+        "message": "Merge pull request #4099 from voriteam/alice/vor-870-retry\n\nRetry webhook delivery"
+      },
+      "author": {"login": "alice", "type": "User"},
+      "parents": [{"sha": "bbb333"}, {"sha": "ddd444"}]
+    }
+  ],
+  "files": []
+}

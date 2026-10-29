@@ -90,6 +90,8 @@ spec:
               value: {{ .Values.config.reminderWeekdaysOnly | quote }}
             - name: REMINDER_DEFAULT_TZ
               value: {{ .Values.config.reminderDefaultTZ | quote }}
+            - name: DEPLOY_ENVIRONMENTS
+              value: {{ .Values.config.deployEnvironments | toJson | quote }}
             {{- $secretName := default (printf "%s-secrets" .Release.Name) .Values.existingSecret }}
             - name: GITHUB_CLIENT_ID
               valueFrom:

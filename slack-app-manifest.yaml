@@ -16,6 +16,11 @@ features:
       url: https://YOUR_DOMAIN/slack/commands
       description: Link your GitHub account to receive PR notifications
       should_escape: false
+    - command: /deploy-notifications
+      url: https://YOUR_DOMAIN/slack/commands
+      description: Get a DM when your pull requests reach production
+      usage_hint: "[on|off|status]"
+      should_escape: false
 
 oauth_config:
   scopes:

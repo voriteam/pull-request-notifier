@@ -103,6 +103,7 @@ func (s *Store) migrate() error {
 		"ALTER TABLE pr_messages ADD COLUMN pr_draft INTEGER NOT NULL DEFAULT 0",
 		"ALTER TABLE user_mappings ADD COLUMN refresh_token TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE user_mappings ADD COLUMN token_expires_at DATETIME",
+		"ALTER TABLE user_mappings ADD COLUMN notify_deploys INTEGER NOT NULL DEFAULT 0",
 	} {
 		s.db.Exec(col) // Ignore "duplicate column" errors.
 	}
@@ -122,6 +123,22 @@ func (s *Store) migrate() error {
 			hour          INTEGER NOT NULL,
 			created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (slack_user_id, local_date, hour)
+		);
+
+		CREATE TABLE IF NOT EXISTS deploy_announcements (
+			repo         TEXT NOT NULL,
+			environment  TEXT NOT NULL,
+			sha          TEXT NOT NULL,
+			announced_at DATETIME,
+			PRIMARY KEY (repo, environment)
+		);
+
+		CREATE TABLE IF NOT EXISTS deploy_notifications (
+			repo          TEXT NOT NULL,
+			pr_number     INTEGER NOT NULL,
+			slack_user_id TEXT NOT NULL,
+			created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (repo, pr_number, slack_user_id)
 		);
 	`)
 	return err
@@ -164,6 +181,7 @@ type UserMapping struct {
 	GitHubToken    string
 	RefreshToken   string
 	TokenExpiresAt *time.Time
+	NotifyDeploys  bool
 }
 
 // GetMappingBySlackUserID returns the full mapping for a Slack user ID.
@@ -171,9 +189,9 @@ func (s *Store) GetMappingBySlackUserID(slackUserID string) (*UserMapping, error
 	var m UserMapping
 	var expiresAt sql.NullTime
 	err := s.db.QueryRow(
-		`SELECT github_username, slack_user_id, github_token, refresh_token, token_expires_at FROM user_mappings WHERE slack_user_id = ?`,
+		`SELECT github_username, slack_user_id, github_token, refresh_token, token_expires_at, notify_deploys FROM user_mappings WHERE slack_user_id = ?`,
 		slackUserID,
-	).Scan(&m.GitHubUsername, &m.SlackUserID, &m.GitHubToken, &m.RefreshToken, &expiresAt)
+	).Scan(&m.GitHubUsername, &m.SlackUserID, &m.GitHubToken, &m.RefreshToken, &expiresAt, &m.NotifyDeploys)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -402,4 +420,70 @@ func (s *Store) MarkReminderSent(slackUserID, localDate string, hour int) error 
 	}
 	_, _ = s.db.Exec(`DELETE FROM reminder_sends WHERE created_at < datetime('now', '-7 days')`)
 	return nil
+}
+
+// --- Deploy notifications ---
+
+// SetNotifyDeploys turns deploy DMs on or off for a linked Slack user.
+func (s *Store) SetNotifyDeploys(slackUserID string, on bool) error {
+	_, err := s.db.Exec(`UPDATE user_mappings SET notify_deploys = ? WHERE slack_user_id = ?`, on, slackUserID)
+	return err
+}
+
+// GetDeployNotifySlackID returns the Slack user ID for a GitHub username that
+// has opted in to deploy DMs, or "" if the user is unlinked or opted out.
+func (s *Store) GetDeployNotifySlackID(githubUsername string) (string, error) {
+	var slackUserID string
+	err := s.db.QueryRow(
+		`SELECT slack_user_id FROM user_mappings WHERE github_username = ? AND notify_deploys = 1`,
+		githubUsername,
+	).Scan(&slackUserID)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return slackUserID, err
+}
+
+// GetDeployAnnouncement returns the last commit SHA announced for the repo's environment, or "" if none.
+func (s *Store) GetDeployAnnouncement(repo, environment string) (string, error) {
+	var sha string
+	err := s.db.QueryRow(`SELECT sha FROM deploy_announcements WHERE repo = ? AND environment = ?`, repo, environment).Scan(&sha)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return sha, err
+}
+
+// SetDeployAnnouncement records sha as the last commit announced for the repo's environment.
+func (s *Store) SetDeployAnnouncement(repo, environment, sha string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO deploy_announcements (repo, environment, sha, announced_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(repo, environment) DO UPDATE SET sha = excluded.sha, announced_at = excluded.announced_at
+	`, repo, environment, sha)
+	return err
+}
+
+// DeployNotified reports whether slackUserID was already told that the PR was deployed.
+func (s *Store) DeployNotified(repo string, prNumber int, slackUserID string) (bool, error) {
+	var one int
+	err := s.db.QueryRow(
+		`SELECT 1 FROM deploy_notifications WHERE repo = ? AND pr_number = ? AND slack_user_id = ?`,
+		repo, prNumber, slackUserID,
+	).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// MarkDeployNotified records that slackUserID was told that the PR was deployed.
+func (s *Store) MarkDeployNotified(repo string, prNumber int, slackUserID string) error {
+	_, err := s.db.Exec(
+		`INSERT OR IGNORE INTO deploy_notifications (repo, pr_number, slack_user_id) VALUES (?, ?, ?)`,
+		repo, prNumber, slackUserID,
+	)
+	return err
 }
