@@ -77,16 +77,33 @@ func (f *fakeGitHub) ListPullsForCommit(_ context.Context, repo, sha string) ([]
 
 type sentDM struct {
 	user string
-	text string
+	text string // the first block's text
+	all  string // every block's text, one per line
 }
 
-type fakeDMs struct{ sent []sentDM }
+type fakeDMs struct {
+	sent []sentDM
+	fail map[string]bool // Slack user IDs whose sends fail
+}
 
 func (f *fakeDMs) PostDM(_ context.Context, user string, blocks []slack.Block, _ string) (string, error) {
-	var first struct{ Text struct{ Text string } }
-	b, _ := json.Marshal(blocks[0])
-	_ = json.Unmarshal(b, &first)
-	f.sent = append(f.sent, sentDM{user, first.Text.Text})
+	if f.fail[user] {
+		return "", fmt.Errorf("slack is down for %s", user)
+	}
+	var texts []string
+	for _, blk := range blocks {
+		var parsed struct {
+			Text     struct{ Text string }
+			Elements []struct{ Text string }
+		}
+		b, _ := json.Marshal(blk)
+		_ = json.Unmarshal(b, &parsed)
+		texts = append(texts, parsed.Text.Text)
+		for _, e := range parsed.Elements {
+			texts = append(texts, e.Text)
+		}
+	}
+	f.sent = append(f.sent, sentDM{user, texts[0], strings.Join(texts, "\n")})
 	return "ts", nil
 }
 
@@ -155,7 +172,7 @@ func TestAnnounce_FirstRunRecordsOnly(t *testing.T) {
 	}
 }
 
-func TestAnnounce_RangeNotifiesOptedInAuthorsOnce(t *testing.T) {
+func TestAnnounce_OneDMPerAuthorListingTheirPRs(t *testing.T) {
 	// c1 alice, c2 bob (opted out), c3 dave (unlinked), c4 direct push, c5 carol, c6 alice.
 	repo := newRepo("alice", "bob", "dave", "", "carol", "alice")
 	repo.commits[5].Message = "Merge pull request from carol/branch" // unsquashed: found via commit lookup
@@ -165,11 +182,19 @@ func TestAnnounce_RangeNotifiesOptedInAuthorsOnce(t *testing.T) {
 	a.Announce(ctx, backend, "master", "production", "c0")
 	a.Announce(ctx, backend, "master", "production", "c6")
 
-	if got, want := users(dms.sent), []string{"UA", "UC", "UA"}; !reflect.DeepEqual(got, want) {
+	if got, want := users(dms.sent), []string{"UA", "UC"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("DMs to %v, want %v", got, want)
 	}
-	if want := "🚀 <https://gh/pr/1|backend#1 Change 1> is live in production"; dms.sent[0].text != want {
-		t.Errorf("DM text %q, want %q", dms.sent[0].text, want)
+	wantAlice := strings.Join([]string{
+		"🚀 2 of your pull requests are live in production",
+		"• <https://gh/pr/1|backend#1 Change 1>  <https://linear.app/vori/issue/VOR-1|VOR-1>\n" +
+			"• <https://gh/pr/6|backend#6 Change 6>  <https://linear.app/vori/issue/VOR-6|VOR-6>",
+	}, "\n")
+	if dms.sent[0].all != wantAlice {
+		t.Errorf("alice's DM:\n%s\nwant:\n%s", dms.sent[0].all, wantAlice)
+	}
+	if want := "🚀 <https://gh/pr/5|backend#5 Change 5> is live in production"; dms.sent[1].text != want {
+		t.Errorf("carol's DM %q, want %q", dms.sent[1].text, want)
 	}
 	if sha, _ := store.GetDeployAnnouncement(backend, "production"); sha != "c6" {
 		t.Errorf("recorded %q, want c6", sha)
@@ -178,11 +203,55 @@ func TestAnnounce_RangeNotifiesOptedInAuthorsOnce(t *testing.T) {
 	// A rerun of the same deploy, and an older deploy arriving late, change nothing.
 	a.Announce(ctx, backend, "master", "production", "c6")
 	a.Announce(ctx, backend, "master", "production", "c3")
-	if len(dms.sent) != 3 {
+	if len(dms.sent) != 2 {
 		t.Errorf("re-sent: %v", users(dms.sent))
 	}
 	if sha, _ := store.GetDeployAnnouncement(backend, "production"); sha != "c6" {
 		t.Errorf("recorded %q after stale event, want c6", sha)
+	}
+}
+
+func TestAnnounce_ReplayListsOnlyUnnotifiedPRs(t *testing.T) {
+	a, store, dms := newTestAnnouncer(t, map[string]*fakeRepo{backend: newRepo("alice", "alice")})
+	ctx := context.Background()
+	a.Announce(ctx, backend, "master", "production", "c0")
+	if err := store.MarkDeployNotified(backend, "production", 1, "UA"); err != nil {
+		t.Fatal(err)
+	}
+
+	a.Announce(ctx, backend, "master", "production", "c2")
+	if len(dms.sent) != 1 || dms.sent[0].text != "🚀 <https://gh/pr/2|backend#2 Change 2> is live in production" {
+		t.Errorf("sent %+v, want one DM about #2 only", dms.sent)
+	}
+}
+
+func TestAnnounce_FailedSendMarksNothing(t *testing.T) {
+	a, store, dms := newTestAnnouncer(t, map[string]*fakeRepo{backend: newRepo("alice", "carol", "alice")})
+	ctx := context.Background()
+	a.Announce(ctx, backend, "master", "production", "c0")
+
+	dms.fail = map[string]bool{"UA": true}
+	a.Announce(ctx, backend, "master", "production", "c3")
+	if got, want := users(dms.sent), []string{"UC"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("DMs to %v, want %v", got, want)
+	}
+	for _, n := range []int{1, 3} {
+		if done, _ := store.DeployNotified(backend, "production", n, "UA"); done {
+			t.Errorf("PR #%d marked notified after a failed send", n)
+		}
+	}
+
+	// Replaying the deploy retries alice's PRs and does not repeat carol's.
+	dms.fail = nil
+	if err := store.SetDeployAnnouncement(backend, "production", "c0"); err != nil {
+		t.Fatal(err)
+	}
+	a.Announce(ctx, backend, "master", "production", "c3")
+	if got, want := users(dms.sent), []string{"UC", "UA"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("DMs to %v, want %v", got, want)
+	}
+	if !strings.HasPrefix(dms.sent[1].text, "🚀 2 of your pull requests") {
+		t.Errorf("retry DM %q, want both of alice's PRs", dms.sent[1].text)
 	}
 }
 

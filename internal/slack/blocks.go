@@ -302,19 +302,74 @@ func CheckRunFailedBlocks(checkName, checkURL, repoName, branch string) []block 
 	}
 }
 
-// DeployedBlocks builds the DM telling an author their PR is live in an environment.
-func DeployedBlocks(repoName string, prNumber int, prTitle, prURL, environment string, linearKeys []string) []block {
-	blocks := []block{
-		sectionBlock(fmt.Sprintf("🚀 <%s|%s#%d %s> is live in %s", prURL, repoName, prNumber, prTitle, environment)),
-	}
-	if len(linearKeys) > 0 {
-		links := make([]string, len(linearKeys))
-		for i, key := range linearKeys {
-			links[i] = fmt.Sprintf("<https://linear.app/vori/issue/%s|%s>", key, key)
+// DeployedPR is one pull request in a deploy DM.
+type DeployedPR struct {
+	RepoName   string
+	Number     int
+	Title      string
+	URL        string
+	LinearKeys []string
+}
+
+// Slack rejects a message with more blocks, or a section with longer text.
+const (
+	maxBlocks      = 50
+	maxSectionText = 3000
+)
+
+// maxTitleRunes keeps one PR line well inside a section.
+const maxTitleRunes = 200
+
+// DeployedBlocks builds the DM telling an author their PRs are live in an
+// environment. prs is in merge order and must not be empty. A long list is
+// cut short with an "…and N more" line.
+func DeployedBlocks(environment string, prs []DeployedPR) []block {
+	if len(prs) == 1 {
+		pr := prs[0]
+		blocks := []block{
+			sectionBlock(fmt.Sprintf("🚀 <%s|%s#%d %s> is live in %s", pr.URL, pr.RepoName, pr.Number, truncate(pr.Title, maxTitleRunes), environment)),
 		}
-		blocks = append(blocks, contextBlock(strings.Join(links, "  ")))
+		if len(pr.LinearKeys) > 0 {
+			blocks = append(blocks, contextBlock(linearLinks(pr.LinearKeys)))
+		}
+		return blocks
+	}
+
+	blocks := []block{sectionBlock(fmt.Sprintf("🚀 %d of your pull requests are live in %s", len(prs), environment))}
+	var chunk string
+	listed := 0
+	for _, pr := range prs {
+		line := fmt.Sprintf("• <%s|%s#%d %s>", pr.URL, pr.RepoName, pr.Number, truncate(pr.Title, maxTitleRunes))
+		if len(pr.LinearKeys) > 0 {
+			line += "  " + linearLinks(pr.LinearKeys)
+		}
+		if chunk != "" && len(chunk)+1+len(line) > maxSectionText {
+			// Flushing adds this section, the next one opens, and the "…and N more" line may follow.
+			if len(blocks)+3 > maxBlocks {
+				break
+			}
+			blocks = append(blocks, sectionBlock(chunk))
+			chunk = ""
+		}
+		if chunk != "" {
+			chunk += "\n"
+		}
+		chunk += line
+		listed++
+	}
+	blocks = append(blocks, sectionBlock(chunk))
+	if rest := len(prs) - listed; rest > 0 {
+		blocks = append(blocks, contextBlock(fmt.Sprintf("…and %d more", rest)))
 	}
 	return blocks
+}
+
+func linearLinks(keys []string) string {
+	links := make([]string, len(keys))
+	for i, key := range keys {
+		links[i] = fmt.Sprintf("<https://linear.app/vori/issue/%s|%s>", key, key)
+	}
+	return strings.Join(links, "  ")
 }
 
 // truncate shortens a string and appends "…" if it exceeds max runes.
