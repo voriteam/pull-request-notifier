@@ -135,10 +135,11 @@ func (s *Store) migrate() error {
 
 		CREATE TABLE IF NOT EXISTS deploy_notifications (
 			repo          TEXT NOT NULL,
+			environment   TEXT NOT NULL,
 			pr_number     INTEGER NOT NULL,
 			slack_user_id TEXT NOT NULL,
 			created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (repo, pr_number, slack_user_id)
+			PRIMARY KEY (repo, environment, pr_number, slack_user_id)
 		);
 	`)
 	return err
@@ -463,12 +464,12 @@ func (s *Store) SetDeployAnnouncement(repo, environment, sha string) error {
 	return err
 }
 
-// DeployNotified reports whether slackUserID was already told that the PR was deployed.
-func (s *Store) DeployNotified(repo string, prNumber int, slackUserID string) (bool, error) {
+// DeployNotified reports whether slackUserID was already told that the PR reached the environment.
+func (s *Store) DeployNotified(repo, environment string, prNumber int, slackUserID string) (bool, error) {
 	var one int
 	err := s.db.QueryRow(
-		`SELECT 1 FROM deploy_notifications WHERE repo = ? AND pr_number = ? AND slack_user_id = ?`,
-		repo, prNumber, slackUserID,
+		`SELECT 1 FROM deploy_notifications WHERE repo = ? AND environment = ? AND pr_number = ? AND slack_user_id = ?`,
+		repo, environment, prNumber, slackUserID,
 	).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
@@ -479,11 +480,11 @@ func (s *Store) DeployNotified(repo string, prNumber int, slackUserID string) (b
 	return true, nil
 }
 
-// MarkDeployNotified records that slackUserID was told that the PR was deployed.
-func (s *Store) MarkDeployNotified(repo string, prNumber int, slackUserID string) error {
+// MarkDeployNotified records that slackUserID was told that the PR reached the environment.
+func (s *Store) MarkDeployNotified(repo, environment string, prNumber int, slackUserID string) error {
 	_, err := s.db.Exec(
-		`INSERT OR IGNORE INTO deploy_notifications (repo, pr_number, slack_user_id) VALUES (?, ?, ?)`,
-		repo, prNumber, slackUserID,
+		`INSERT OR IGNORE INTO deploy_notifications (repo, environment, pr_number, slack_user_id) VALUES (?, ?, ?, ?)`,
+		repo, environment, prNumber, slackUserID,
 	)
 	return err
 }

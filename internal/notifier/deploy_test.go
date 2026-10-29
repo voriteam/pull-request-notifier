@@ -224,17 +224,23 @@ func TestAnnounce_SeparateRepos(t *testing.T) {
 	}
 }
 
-func TestAnnounce_SamePRInTwoEnvironmentsNotifiesOnce(t *testing.T) {
+func TestAnnounce_SamePRInTwoEnvironmentsNotifiesOncePerEnvironment(t *testing.T) {
 	a, _, dms := newTestAnnouncer(t, map[string]*fakeRepo{backend: newRepo("alice")})
 	ctx := context.Background()
 	for _, env := range []string{"staging", "production"} {
 		a.Announce(ctx, backend, env, "c0")
 	}
 	a.Announce(ctx, backend, "staging", "c1")
+	a.Announce(ctx, backend, "staging", "c1")
 	a.Announce(ctx, backend, "production", "c1")
 
-	if len(dms.sent) != 1 {
-		t.Errorf("sent %v, want one DM", users(dms.sent))
+	if len(dms.sent) != 2 {
+		t.Fatalf("sent %v, want one DM per environment", users(dms.sent))
+	}
+	for i, env := range []string{"staging", "production"} {
+		if !strings.HasSuffix(dms.sent[i].text, "is live in "+env) {
+			t.Errorf("DM %d = %q, want it to name %s", i, dms.sent[i].text, env)
+		}
 	}
 }
 

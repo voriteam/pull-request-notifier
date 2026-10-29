@@ -154,8 +154,6 @@ Existing installations need the **Deployments: Read-only** permission and the **
 
 Each engineer who wants deploy DMs runs `/deploy-notifications on` (`off` to stop, `status` to check). It requires a linked GitHub account.
 
-Known limitation: each pull request is announced once per person. When several configured environments receive the same pull request, the DM names only the first environment it reaches.
-
 ## Development
 
 ```bash

@@ -164,7 +164,7 @@ func (a *DeployAnnouncer) notify(ctx context.Context, log *slog.Logger, repo, en
 	if slackUserID == "" {
 		return false
 	}
-	done, err := a.store.DeployNotified(repo, pr.Number, slackUserID)
+	done, err := a.store.DeployNotified(repo, environment, pr.Number, slackUserID)
 	if err != nil {
 		log.Error("deploy.lookup_notified_failed", "err", err)
 		return false
@@ -180,7 +180,7 @@ func (a *DeployAnnouncer) notify(ctx context.Context, log *slog.Logger, repo, en
 		log.Error("deploy.send_dm_failed", "slack.user_id", slackUserID, "err", err)
 		return false
 	}
-	if err := a.store.MarkDeployNotified(repo, pr.Number, slackUserID); err != nil {
+	if err := a.store.MarkDeployNotified(repo, environment, pr.Number, slackUserID); err != nil {
 		log.Error("deploy.mark_notified_failed", "err", err)
 	}
 	log.Info("deploy.notified", "slack.user_id", slackUserID)
