@@ -30,11 +30,14 @@ type Handler struct {
 	store             *db.Store
 	slack             *slack.Client
 	github            *github.Client
+	deploys           *DeployAnnouncer
 }
 
 // NewHandler creates a new GitHub webhook handler.
-func NewHandler(webhookSecret string, enableBotComments bool, store *db.Store, slackClient *slack.Client, githubClient *github.Client) *Handler {
+// deploys may be nil, which ignores deployment_status events.
+func NewHandler(webhookSecret string, enableBotComments bool, store *db.Store, slackClient *slack.Client, githubClient *github.Client, deploys *DeployAnnouncer) *Handler {
 	return &Handler{
+		deploys:           deploys,
 		webhookSecret:     webhookSecret,
 		enableBotComments: enableBotComments,
 		store:             store,
@@ -95,6 +98,10 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 			h.handleIssueComment(ctx, body)
 		case "check_run":
 			h.handleCheckRun(ctx, body)
+		case "deployment_status":
+			if h.deploys != nil {
+				h.deploys.HandleDeploymentStatus(ctx, body)
+			}
 		}
 	}()
 }

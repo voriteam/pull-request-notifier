@@ -18,6 +18,9 @@ config:
   reminderHours: "9,13,15"
   reminderWeekdaysOnly: true
   reminderDefaultTZ: "America/Los_Angeles"
+  # GitHub deployment environments whose successful deployments DM opted-in
+  # PR authors, e.g. [production]. Empty turns deploy notifications off.
+  deployEnvironments: []
 
 # Provide credentials inline (for dev/testing).
 secrets:

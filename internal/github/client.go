@@ -38,6 +38,7 @@ type cachedName struct {
 // Client makes authenticated calls to the GitHub REST API.
 type Client struct {
 	httpClient     *http.Client
+	baseURL        string
 	appID          string
 	privateKey     *rsa.PrivateKey
 	installationID int64
@@ -53,7 +54,7 @@ type Client struct {
 
 // NewClient returns a new GitHub API client with GitHub App authentication.
 func NewClient(appID, privateKeyPEM, installationID string) (*Client, error) {
-	c := &Client{httpClient: http.DefaultClient, nameCache: make(map[string]cachedName)}
+	c := &Client{httpClient: http.DefaultClient, baseURL: apiBase, nameCache: make(map[string]cachedName)}
 
 	if appID != "" && privateKeyPEM != "" && installationID != "" {
 		// Support PEM keys passed with literal \n (e.g. from .env files or k8s secrets).
@@ -303,6 +304,136 @@ func (c *Client) ListReviewRequestedPRs(ctx context.Context, username string) ([
 		})
 	}
 	return prs, nil
+}
+
+// Comparison is the result of comparing two commits.
+type Comparison struct {
+	// Status is "ahead", "behind", "identical" or "diverged", from base to head.
+	Status  string
+	Commits []CommitSummary
+}
+
+// CommitSummary is one commit in a Comparison, oldest first.
+type CommitSummary struct {
+	SHA     string
+	Message string
+}
+
+// CompareCommits returns the commits reachable from head but not base,
+// following pagination past the API's 250-commit default.
+func (c *Client) CompareCommits(ctx context.Context, repo, base, head string) (*Comparison, error) {
+	token, err := c.GetInstallationToken()
+	if err != nil {
+		return nil, fmt.Errorf("get installation token: %w", err)
+	}
+	owner, repoName, err := splitRepo(repo)
+	if err != nil {
+		return nil, err
+	}
+
+	cmp := &Comparison{}
+	for page := 1; ; page++ {
+		var resp struct {
+			Status       string `json:"status"`
+			TotalCommits int    `json:"total_commits"`
+			Commits      []struct {
+				SHA    string `json:"sha"`
+				Commit struct {
+					Message string `json:"message"`
+				} `json:"commit"`
+			} `json:"commits"`
+		}
+		path := fmt.Sprintf("/repos/%s/%s/compare/%s...%s?per_page=100&page=%d", owner, repoName, base, head, page)
+		if err := c.get(ctx, token, path, &resp); err != nil {
+			return nil, err
+		}
+		cmp.Status = resp.Status
+		for _, commit := range resp.Commits {
+			cmp.Commits = append(cmp.Commits, CommitSummary{SHA: commit.SHA, Message: commit.Commit.Message})
+		}
+		if len(resp.Commits) == 0 || len(cmp.Commits) >= resp.TotalCommits {
+			return cmp, nil
+		}
+	}
+}
+
+// PullSummary is the subset of a pull request needed to announce it.
+type PullSummary struct {
+	Number int
+	Title  string
+	URL    string
+	Author string
+	Branch string
+	// BaseBranch is the branch the PR targets.
+	BaseBranch string
+	Merged     bool
+}
+
+type apiPull struct {
+	Number   int     `json:"number"`
+	Title    string  `json:"title"`
+	HTMLURL  string  `json:"html_url"`
+	MergedAt *string `json:"merged_at"`
+	User     struct {
+		Login string `json:"login"`
+	} `json:"user"`
+	Head struct {
+		Ref string `json:"ref"`
+	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
+}
+
+func (p apiPull) summary() PullSummary {
+	return PullSummary{
+		Number:     p.Number,
+		Title:      p.Title,
+		URL:        p.HTMLURL,
+		Author:     p.User.Login,
+		Branch:     p.Head.Ref,
+		BaseBranch: p.Base.Ref,
+		Merged:     p.MergedAt != nil,
+	}
+}
+
+// GetPull returns a pull request by number.
+func (c *Client) GetPull(ctx context.Context, repo string, number int) (*PullSummary, error) {
+	token, err := c.GetInstallationToken()
+	if err != nil {
+		return nil, fmt.Errorf("get installation token: %w", err)
+	}
+	owner, repoName, err := splitRepo(repo)
+	if err != nil {
+		return nil, err
+	}
+	var pr apiPull
+	if err := c.get(ctx, token, fmt.Sprintf("/repos/%s/%s/pulls/%d", owner, repoName, number), &pr); err != nil {
+		return nil, err
+	}
+	s := pr.summary()
+	return &s, nil
+}
+
+// ListPullsForCommit returns the pull requests associated with a commit.
+func (c *Client) ListPullsForCommit(ctx context.Context, repo, sha string) ([]PullSummary, error) {
+	token, err := c.GetInstallationToken()
+	if err != nil {
+		return nil, fmt.Errorf("get installation token: %w", err)
+	}
+	owner, repoName, err := splitRepo(repo)
+	if err != nil {
+		return nil, err
+	}
+	var prs []apiPull
+	if err := c.get(ctx, token, fmt.Sprintf("/repos/%s/%s/commits/%s/pulls", owner, repoName, sha), &prs); err != nil {
+		return nil, err
+	}
+	out := make([]PullSummary, 0, len(prs))
+	for _, pr := range prs {
+		out = append(out, pr.summary())
+	}
+	return out, nil
 }
 
 // OAuthToken holds the tokens returned by GitHub's OAuth token endpoint.
@@ -560,7 +691,7 @@ func (c *Client) get(ctx context.Context, token, path string, out any) error {
 	))
 	defer span.End()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBase+path, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -27,6 +28,10 @@ type Config struct {
 	ReminderHours        []int
 	ReminderWeekdaysOnly bool
 	ReminderDefaultTZ    string
+
+	// GitHub deployment environments whose successful deployments are announced.
+	// Empty turns deploy notifications off.
+	DeployEnvironments []string
 }
 
 // Load reads configuration from environment variables. Panics on missing required values.
@@ -48,6 +53,7 @@ func Load() *Config {
 		ReminderHours:        getIntListEnv("REMINDER_HOURS", []int{9, 13, 15}),
 		ReminderWeekdaysOnly: getBoolEnv("REMINDER_WEEKDAYS_ONLY", true),
 		ReminderDefaultTZ:    getEnv("REMINDER_DEFAULT_TZ", "America/Los_Angeles"),
+		DeployEnvironments:   mustGetJSONStringListEnv("DEPLOY_ENVIRONMENTS"),
 	}
 }
 
@@ -86,6 +92,24 @@ func getIntListEnv(key string, fallback []int) []int {
 		return fallback
 	}
 	return out
+}
+
+// mustGetJSONStringListEnv parses a JSON array of strings. Unset is an empty list.
+func mustGetJSONStringListEnv(key string) []string {
+	list, err := parseJSONStringList(os.Getenv(key))
+	if err != nil {
+		panic(fmt.Sprintf("invalid %s: %v", key, err))
+	}
+	return list
+}
+
+func parseJSONStringList(v string) ([]string, error) {
+	if strings.TrimSpace(v) == "" {
+		return nil, nil
+	}
+	var list []string
+	err := json.Unmarshal([]byte(v), &list)
+	return list, err
 }
 
 func mustGetEnv(key string) string {

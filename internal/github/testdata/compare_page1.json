@@ -1,0 +1,30 @@
+{
+  "url": "https://api.github.com/repos/voriteam/backend/compare/aaa111...ccc333",
+  "status": "ahead",
+  "ahead_by": 3,
+  "behind_by": 0,
+  "total_commits": 3,
+  "base_commit": {"sha": "aaa111"},
+  "merge_base_commit": {"sha": "aaa111"},
+  "commits": [
+    {
+      "sha": "bbb222",
+      "commit": {
+        "author": {"name": "Alice", "email": "alice@example.com", "date": "2026-10-28T17:02:11Z"},
+        "message": "Fixed invoice rounding (#4101)\n\nCloses VOR-881"
+      },
+      "author": {"login": "alice", "type": "User"},
+      "parents": [{"sha": "aaa111"}]
+    },
+    {
+      "sha": "bbb333",
+      "commit": {
+        "author": {"name": "Carol", "email": "carol@example.com", "date": "2026-10-28T17:40:52Z"},
+        "message": "Collect a payment method before signing (#4102)"
+      },
+      "author": {"login": "carol", "type": "User"},
+      "parents": [{"sha": "bbb222"}]
+    }
+  ],
+  "files": []
+}

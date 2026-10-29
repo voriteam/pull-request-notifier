@@ -14,6 +14,7 @@ An open source Go service that delivers GitHub pull request activity as Slack DM
 - **React from Slack** → 👍 👀 🎉 quick buttons + 👎 😄 😕 ❤️ 🚀 overflow menu → posts a GitHub reaction.
 - **CI check failures** → DMs when a check run fails on a PR branch, with check name, repo, and branch.
 - **Review reminders** → Three times a day (9AM/1PM/3PM by default, weekdays only, in each user's Slack timezone) DMs a digest of open PRs still awaiting their review.
+- **Production deploys (opt-in)** → After `/deploy-notifications on`, DMs you when a pull request you authored is running in production, with links to the Linear issues in its branch name and title.
 - **Display names** → Shows full names (fetched from GitHub profiles) instead of usernames, with a 4-hour cache.
 - **Self-service account linking** → `/link-github` slash command initiates GitHub OAuth; no manual mapping needed.
 - **Admin dashboard** → GitHub OAuth-protected page at `/admin` showing all linked accounts.
@@ -69,6 +70,12 @@ Reminders read each user's timezone from Slack (`users.info`), which requires th
 `users:read` bot scope (see the Slack App setup below). Until the app is reinstalled
 with that scope, reminders fall back to `REMINDER_DEFAULT_TZ`.
 
+Optional deploy notification setting (off by default):
+
+| Variable | Default | Description |
+|---|---|---|
+| `DEPLOY_ENVIRONMENTS` | empty | JSON array of GitHub deployment environments to announce, e.g. `["production"]`. In Helm, set `config.deployEnvironments`. |
+
 ## Kubernetes (Helm)
 
 ```bash
@@ -109,6 +116,7 @@ Create a GitHub App at **Settings → Developer settings → GitHub Apps → New
   - Issues: Read-only (required for PR comment notifications)
   - Contents: Read-only
   - Checks: Read-only (for CI failure notifications)
+  - Deployments: Read-only (for deploy notifications)
 - **Organization permissions**:
   - Members: Read-only (for admin dashboard access control)
 - **Account permissions**:
@@ -120,6 +128,7 @@ Create a GitHub App at **Settings → Developer settings → GitHub Apps → New
 - Pull request review comment
 - Issue comment
 - Check run
+- Deployment status
 
 After creating the app, note the **App ID**, **Client ID**, and generate a **Client secret** — these become `GITHUB_APP_ID`, `GITHUB_CLIENT_ID`, and `GITHUB_CLIENT_SECRET`. Generate a private key and save it — this becomes `GITHUB_PRIVATE_KEY`.
 
@@ -136,6 +145,14 @@ Note the **Bot Token** (`xoxb-...`) and **Signing Secret** from the app settings
 ### 3. Link accounts
 
 Each engineer runs `/link-github` in Slack once. This initiates GitHub OAuth and stores the `github_username ↔ slack_user_id` mapping. The data is entirely re-creatable — if the SQLite file is lost, users simply run `/link-github` again.
+
+### 4. Deploy notifications (optional)
+
+Set `DEPLOY_ENVIRONMENTS` to the GitHub deployment environments to announce. When a deployment to one of them succeeds in any repository the app is installed on, every opted-in author of a pull request merged since that environment's previous successful deployment gets one DM. The first deployment seen for a repository and environment only sets the starting point. A rerun, or an older deployment that finishes late, notifies no one.
+
+Existing installations need the **Deployments: Read-only** permission and the **Deployment status** event added to the GitHub App. This is a manual step, and the organization must approve the new permission before events arrive.
+
+Each engineer who wants deploy DMs runs `/deploy-notifications on` (`off` to stop, `status` to check). It requires a linked GitHub account.
 
 ## Development
 

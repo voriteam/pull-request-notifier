@@ -1,0 +1,37 @@
+{
+  "action": "created",
+  "deployment_status": {
+    "url": "https://api.github.com/repos/voriteam/backend/deployments/2210441/statuses/5521093",
+    "id": 5521093,
+    "state": "success",
+    "description": "",
+    "environment": "production",
+    "target_url": "https://github.com/voriteam/backend/actions/runs/18822001133/job/53699120045",
+    "created_at": "2026-10-28T18:31:40Z",
+    "updated_at": "2026-10-28T18:31:40Z",
+    "creator": {"login": "github-actions[bot]", "type": "Bot"}
+  },
+  "deployment": {
+    "url": "https://api.github.com/repos/voriteam/backend/deployments/2210441",
+    "id": 2210441,
+    "sha": "c2",
+    "ref": "master",
+    "task": "deploy",
+    "payload": {},
+    "original_environment": "production",
+    "environment": "production",
+    "description": null,
+    "creator": {"login": "github-actions[bot]", "type": "Bot"},
+    "created_at": "2026-10-28T18:12:05Z",
+    "updated_at": "2026-10-28T18:31:40Z",
+    "production_environment": true
+  },
+  "repository": {
+    "id": 412000001,
+    "name": "backend",
+    "full_name": "voriteam/backend",
+    "default_branch": "master",
+    "private": true
+  },
+  "sender": {"login": "github-actions[bot]", "type": "Bot"}
+}

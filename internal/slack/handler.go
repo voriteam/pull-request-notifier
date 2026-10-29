@@ -65,6 +65,8 @@ func (h *Handler) HandleCommand(w http.ResponseWriter, r *http.Request) {
 	switch command {
 	case "/link-github":
 		h.handleLinkGitHub(w, slackUserID)
+	case "/deploy-notifications":
+		h.handleDeployNotifications(w, slackUserID, vals.Get("text"))
 	default:
 		w.WriteHeader(http.StatusOK)
 	}
@@ -88,6 +90,48 @@ func (h *Handler) handleLinkGitHub(w http.ResponseWriter, slackUserID string) {
 		"blocks":        blocks,
 		"text":          "Link your GitHub account",
 	})
+}
+
+func (h *Handler) handleDeployNotifications(w http.ResponseWriter, slackUserID, arg string) {
+	reply := func(text string) {
+		jsonResponse(w, map[string]string{"response_type": "ephemeral", "text": text})
+	}
+
+	mapping, err := h.store.GetMappingBySlackUserID(slackUserID)
+	if err != nil {
+		slog.Error("deploy notifications: lookup mapping", "err", err)
+		reply("Something went wrong. Please try again.")
+		return
+	}
+	if mapping == nil {
+		reply("Link your GitHub account first with `/link-github`.")
+		return
+	}
+
+	on := mapping.NotifyDeploys
+	switch strings.ToLower(strings.TrimSpace(arg)) {
+	case "on":
+		on = true
+	case "off":
+		on = false
+	case "", "status":
+	default:
+		reply("Usage: `/deploy-notifications [on|off|status]`")
+		return
+	}
+	if on != mapping.NotifyDeploys {
+		if err := h.store.SetNotifyDeploys(slackUserID, on); err != nil {
+			slog.Error("deploy notifications: save", "err", err)
+			reply("Something went wrong. Please try again.")
+			return
+		}
+	}
+
+	if on {
+		reply("Deploy notifications are *on*. You'll get a DM when a pull request you authored is running in production.")
+	} else {
+		reply("Deploy notifications are *off*. Turn them on with `/deploy-notifications on`.")
+	}
 }
 
 // HandleEvent handles POST /slack/events (Events API).
