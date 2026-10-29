@@ -30,6 +30,7 @@
     "id": 412000001,
     "name": "backend",
     "full_name": "voriteam/backend",
+    "default_branch": "master",
     "private": true
   },
   "sender": {"login": "github-actions[bot]", "type": "Bot"}

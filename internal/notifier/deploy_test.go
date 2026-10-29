@@ -19,6 +19,8 @@ import (
 type fakeRepo struct {
 	commits []github.CommitSummary
 	prs     map[string]*github.PullSummary // keyed by commit SHA
+	// others are further PRs that contain a commit, keyed by commit SHA.
+	others map[string][]github.PullSummary
 }
 
 type fakeGitHub struct {
@@ -48,19 +50,29 @@ func (f *fakeGitHub) CompareCommits(_ context.Context, repo, base, head string) 
 }
 
 func (f *fakeGitHub) GetPull(_ context.Context, repo string, number int) (*github.PullSummary, error) {
-	for _, pr := range f.repos[repo].prs {
+	r := f.repos[repo]
+	for _, pr := range r.prs {
 		if pr != nil && pr.Number == number {
 			return pr, nil
+		}
+	}
+	for _, prs := range r.others {
+		for _, pr := range prs {
+			if pr.Number == number {
+				return &pr, nil
+			}
 		}
 	}
 	return nil, fmt.Errorf("no PR %d", number)
 }
 
 func (f *fakeGitHub) ListPullsForCommit(_ context.Context, repo, sha string) ([]github.PullSummary, error) {
-	if pr := f.repos[repo].prs[sha]; pr != nil {
-		return []github.PullSummary{*pr}, nil
+	r := f.repos[repo]
+	prs := r.others[sha]
+	if pr := r.prs[sha]; pr != nil {
+		prs = append(prs, *pr)
 	}
-	return nil, nil
+	return prs, nil
 }
 
 type sentDM struct {
@@ -81,7 +93,7 @@ func (f *fakeDMs) PostDM(_ context.Context, user string, blocks []slack.Block, _
 // newRepo builds commits c0..cN, where commit cN squash-merges PR #N by the Nth
 // author, or is a direct push when that author is empty.
 func newRepo(authors ...string) *fakeRepo {
-	r := &fakeRepo{prs: map[string]*github.PullSummary{}}
+	r := &fakeRepo{prs: map[string]*github.PullSummary{}, others: map[string][]github.PullSummary{}}
 	r.commits = append(r.commits, github.CommitSummary{SHA: "c0", Message: "initial"})
 	for i, author := range authors {
 		n := i + 1
@@ -91,7 +103,7 @@ func newRepo(authors ...string) *fakeRepo {
 			msg = fmt.Sprintf("Change %d (#%d)\n\nbody", n, n)
 			r.prs[sha] = &github.PullSummary{
 				Number: n, Title: fmt.Sprintf("Change %d", n), URL: fmt.Sprintf("https://gh/pr/%d", n),
-				Author: author, Branch: fmt.Sprintf("%s/vor-%d-change", author, n), Merged: true,
+				Author: author, Branch: fmt.Sprintf("%s/vor-%d-change", author, n), BaseBranch: "master", Merged: true,
 			}
 		}
 		r.commits = append(r.commits, github.CommitSummary{SHA: sha, Message: msg})
@@ -133,7 +145,7 @@ const backend = "voriteam/backend"
 
 func TestAnnounce_FirstRunRecordsOnly(t *testing.T) {
 	a, store, dms := newTestAnnouncer(t, map[string]*fakeRepo{backend: newRepo("alice", "carol")})
-	a.Announce(context.Background(), backend, "production", "c2")
+	a.Announce(context.Background(), backend, "master", "production", "c2")
 
 	if len(dms.sent) != 0 {
 		t.Errorf("sent %v on first run", dms.sent)
@@ -150,8 +162,8 @@ func TestAnnounce_RangeNotifiesOptedInAuthorsOnce(t *testing.T) {
 	a, store, dms := newTestAnnouncer(t, map[string]*fakeRepo{backend: repo})
 	ctx := context.Background()
 
-	a.Announce(ctx, backend, "production", "c0")
-	a.Announce(ctx, backend, "production", "c6")
+	a.Announce(ctx, backend, "master", "production", "c0")
+	a.Announce(ctx, backend, "master", "production", "c6")
 
 	if got, want := users(dms.sent), []string{"UA", "UC", "UA"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("DMs to %v, want %v", got, want)
@@ -164,8 +176,8 @@ func TestAnnounce_RangeNotifiesOptedInAuthorsOnce(t *testing.T) {
 	}
 
 	// A rerun of the same deploy, and an older deploy arriving late, change nothing.
-	a.Announce(ctx, backend, "production", "c6")
-	a.Announce(ctx, backend, "production", "c3")
+	a.Announce(ctx, backend, "master", "production", "c6")
+	a.Announce(ctx, backend, "master", "production", "c3")
 	if len(dms.sent) != 3 {
 		t.Errorf("re-sent: %v", users(dms.sent))
 	}
@@ -177,14 +189,14 @@ func TestAnnounce_RangeNotifiesOptedInAuthorsOnce(t *testing.T) {
 func TestAnnounce_RerunAfterLostRecordDoesNotDoubleSend(t *testing.T) {
 	a, store, dms := newTestAnnouncer(t, map[string]*fakeRepo{backend: newRepo("alice")})
 	ctx := context.Background()
-	a.Announce(ctx, backend, "production", "c0")
-	a.Announce(ctx, backend, "production", "c1")
+	a.Announce(ctx, backend, "master", "production", "c0")
+	a.Announce(ctx, backend, "master", "production", "c1")
 
 	// Simulate a crash after the DM but before the deploy was recorded.
 	if err := store.SetDeployAnnouncement(backend, "production", "c0"); err != nil {
 		t.Fatal(err)
 	}
-	a.Announce(ctx, backend, "production", "c1")
+	a.Announce(ctx, backend, "master", "production", "c1")
 	if len(dms.sent) != 1 {
 		t.Errorf("sent %d DMs, want 1", len(dms.sent))
 	}
@@ -193,8 +205,8 @@ func TestAnnounce_RerunAfterLostRecordDoesNotDoubleSend(t *testing.T) {
 func TestAnnounce_DivergedRecordsWithoutNotifying(t *testing.T) {
 	a, store, dms := newTestAnnouncer(t, map[string]*fakeRepo{backend: newRepo("alice")})
 	ctx := context.Background()
-	a.Announce(ctx, backend, "production", "c0")
-	a.Announce(ctx, backend, "production", "force-pushed")
+	a.Announce(ctx, backend, "master", "production", "c0")
+	a.Announce(ctx, backend, "master", "production", "force-pushed")
 
 	if len(dms.sent) != 0 {
 		t.Errorf("sent %v", dms.sent)
@@ -211,10 +223,10 @@ func TestAnnounce_SeparateRepos(t *testing.T) {
 	})
 	ctx := context.Background()
 	for _, repo := range []string{backend, "voriteam/composer"} {
-		a.Announce(ctx, repo, "production", "c0")
+		a.Announce(ctx, repo, "master", "production", "c0")
 	}
-	a.Announce(ctx, backend, "production", "c1")
-	a.Announce(ctx, "voriteam/composer", "production", "c1")
+	a.Announce(ctx, backend, "master", "production", "c1")
+	a.Announce(ctx, "voriteam/composer", "master", "production", "c1")
 
 	if got, want := users(dms.sent), []string{"UA", "UC"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("DMs to %v, want %v", got, want)
@@ -228,11 +240,11 @@ func TestAnnounce_SamePRInTwoEnvironmentsNotifiesOncePerEnvironment(t *testing.T
 	a, _, dms := newTestAnnouncer(t, map[string]*fakeRepo{backend: newRepo("alice")})
 	ctx := context.Background()
 	for _, env := range []string{"staging", "production"} {
-		a.Announce(ctx, backend, env, "c0")
+		a.Announce(ctx, backend, "master", env, "c0")
 	}
-	a.Announce(ctx, backend, "staging", "c1")
-	a.Announce(ctx, backend, "staging", "c1")
-	a.Announce(ctx, backend, "production", "c1")
+	a.Announce(ctx, backend, "master", "staging", "c1")
+	a.Announce(ctx, backend, "master", "staging", "c1")
+	a.Announce(ctx, backend, "master", "production", "c1")
 
 	if len(dms.sent) != 2 {
 		t.Fatalf("sent %v, want one DM per environment", users(dms.sent))
@@ -241,6 +253,31 @@ func TestAnnounce_SamePRInTwoEnvironmentsNotifiesOncePerEnvironment(t *testing.T
 		if !strings.HasSuffix(dms.sent[i].text, "is live in "+env) {
 			t.Errorf("DM %d = %q, want it to name %s", i, dms.sent[i].text, env)
 		}
+	}
+}
+
+func TestAnnounce_OnlyPRsMergedIntoTheDeployedBranch(t *testing.T) {
+	repo := newRepo("alice", "carol")
+	// c1's own PR is open, and another PR containing it merged into a feature branch.
+	repo.prs["c1"].Merged = false
+	repo.others["c1"] = []github.PullSummary{
+		{Number: 90, Title: "Stacked", Author: "carol", BaseBranch: "alice/feature", Merged: true},
+	}
+	// c2 has no "(#N)" subject. Its commit lookup also returns an open PR that contains it.
+	repo.commits[2].Message = "Merge pull request from carol/branch"
+	repo.others["c2"] = []github.PullSummary{
+		{Number: 91, Title: "Still open", Author: "alice", BaseBranch: "master"},
+	}
+	a, _, dms := newTestAnnouncer(t, map[string]*fakeRepo{backend: repo})
+	ctx := context.Background()
+	a.Announce(ctx, backend, "master", "production", "c0")
+	a.Announce(ctx, backend, "master", "production", "c2")
+
+	if got, want := users(dms.sent), []string{"UC"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("DMs to %v, want %v", got, want)
+	}
+	if !strings.Contains(dms.sent[0].text, "#2 Change 2") {
+		t.Errorf("announced the wrong PR: %q", dms.sent[0].text)
 	}
 }
 
@@ -262,7 +299,7 @@ func TestHandleDeploymentStatus(t *testing.T) {
 	ctx := context.Background()
 
 	a, store, dms := newTestAnnouncer(t, map[string]*fakeRepo{backend: newRepo("alice", "carol")})
-	a.Announce(ctx, backend, "production", "c0")
+	a.Announce(ctx, backend, "master", "production", "c0")
 
 	a.HandleDeploymentStatus(ctx, event(func(m map[string]any) {
 		m["deployment_status"].(map[string]any)["state"] = "in_progress"

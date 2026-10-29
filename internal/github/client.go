@@ -364,7 +364,9 @@ type PullSummary struct {
 	URL    string
 	Author string
 	Branch string
-	Merged bool
+	// BaseBranch is the branch the PR targets.
+	BaseBranch string
+	Merged     bool
 }
 
 type apiPull struct {
@@ -378,16 +380,20 @@ type apiPull struct {
 	Head struct {
 		Ref string `json:"ref"`
 	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
 }
 
 func (p apiPull) summary() PullSummary {
 	return PullSummary{
-		Number: p.Number,
-		Title:  p.Title,
-		URL:    p.HTMLURL,
-		Author: p.User.Login,
-		Branch: p.Head.Ref,
-		Merged: p.MergedAt != nil,
+		Number:     p.Number,
+		Title:      p.Title,
+		URL:        p.HTMLURL,
+		Author:     p.User.Login,
+		Branch:     p.Head.Ref,
+		BaseBranch: p.Base.Ref,
+		Merged:     p.MergedAt != nil,
 	}
 }
 

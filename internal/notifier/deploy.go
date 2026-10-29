@@ -61,7 +61,10 @@ type deploymentStatusEvent struct {
 		SHA         string `json:"sha"`
 		Environment string `json:"environment"`
 	} `json:"deployment"`
-	Repository ghRepo `json:"repository"`
+	Repository struct {
+		FullName      string `json:"full_name"`
+		DefaultBranch string `json:"default_branch"`
+	} `json:"repository"`
 }
 
 // HandleDeploymentStatus announces a successful deployment to a configured environment.
@@ -74,14 +77,14 @@ func (a *DeployAnnouncer) HandleDeploymentStatus(ctx context.Context, body []byt
 	if evt.DeploymentStatus.State != "success" || !a.environments[evt.Deployment.Environment] {
 		return
 	}
-	a.Announce(ctx, evt.Repository.FullName, evt.Deployment.Environment, evt.Deployment.SHA)
+	a.Announce(ctx, evt.Repository.FullName, evt.Repository.DefaultBranch, evt.Deployment.Environment, evt.Deployment.SHA)
 }
 
 // Announce handles sha being deployed to the repo's environment. It announces
-// the PRs merged since the environment's previously announced commit. The
+// the PRs merged into branch since the environment's previously announced commit. The
 // first call for an environment only records sha. A sha that is not ahead of
 // the previous one is ignored, so out-of-order and repeated calls are safe.
-func (a *DeployAnnouncer) Announce(ctx context.Context, repo, environment, sha string) {
+func (a *DeployAnnouncer) Announce(ctx context.Context, repo, branch, environment, sha string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
@@ -127,7 +130,7 @@ func (a *DeployAnnouncer) Announce(ctx context.Context, repo, environment, sha s
 	notified := 0
 	seen := make(map[int]bool)
 	for _, commit := range cmp.Commits {
-		pr, err := a.findPull(ctx, repo, commit)
+		pr, err := a.findPull(ctx, repo, branch, commit)
 		if err != nil {
 			log.Error("deploy.find_pull_failed", "github.commit_sha", commit.SHA, "err", err)
 			continue
@@ -189,20 +192,30 @@ func (a *DeployAnnouncer) notify(ctx context.Context, log *slog.Logger, repo, en
 
 var squashPRNumber = regexp.MustCompile(`\(#(\d+)\)\s*$`)
 
-// findPull returns the merged PR that produced commit, or nil for a direct push.
-func (a *DeployAnnouncer) findPull(ctx context.Context, repo string, commit github.CommitSummary) (*github.PullSummary, error) {
+// findPull returns the PR merged into branch that produced commit, or nil for
+// a direct push. A commit's PR list also holds open PRs and PRs merged into
+// other branches that contain it.
+func (a *DeployAnnouncer) findPull(ctx context.Context, repo, branch string, commit github.CommitSummary) (*github.PullSummary, error) {
+	mergedIntoBranch := func(pr *github.PullSummary) bool { return pr.Merged && pr.BaseBranch == branch }
+
 	subject, _, _ := strings.Cut(commit.Message, "\n")
 	if m := squashPRNumber.FindStringSubmatch(subject); m != nil {
 		n, _ := strconv.Atoi(m[1])
-		return a.gh.GetPull(ctx, repo, n)
+		pr, err := a.gh.GetPull(ctx, repo, n)
+		if err != nil {
+			return nil, err
+		}
+		if mergedIntoBranch(pr) {
+			return pr, nil
+		}
 	}
 	prs, err := a.gh.ListPullsForCommit(ctx, repo, commit.SHA)
 	if err != nil {
 		return nil, err
 	}
-	for _, pr := range prs {
-		if pr.Merged {
-			return &pr, nil
+	for i := range prs {
+		if mergedIntoBranch(&prs[i]) {
+			return &prs[i], nil
 		}
 	}
 	return nil, nil

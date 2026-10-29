@@ -67,7 +67,7 @@ func TestGetPull(t *testing.T) {
 	}
 	want := PullSummary{
 		Number: 4101, Title: "Fixed invoice rounding", URL: "https://github.com/voriteam/backend/pull/4101",
-		Author: "alice", Branch: "alice/vor-881-invoice-rounding", Merged: true,
+		Author: "alice", Branch: "alice/vor-881-invoice-rounding", BaseBranch: "master", Merged: true,
 	}
 	if *got != want {
 		t.Errorf("got %+v, want %+v", *got, want)
@@ -80,7 +80,7 @@ func TestListPullsForCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0].Number != 4099 || !got[0].Merged || got[1].Merged {
+	if len(got) != 2 || got[0].Number != 4099 || !got[0].Merged || got[1].Merged || got[1].BaseBranch != "alice/vor-870-retry" {
 		t.Errorf("got %+v", got)
 	}
 }
