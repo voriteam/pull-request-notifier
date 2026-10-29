@@ -127,9 +127,38 @@ func (a *DeployAnnouncer) Announce(ctx context.Context, repo, branch, environmen
 		return
 	}
 
-	notified := 0
+	pending := a.pendingByUser(ctx, log, repo, branch, environment, cmp.Commits)
+	notified, dms := 0, 0
+	for _, p := range pending {
+		if a.send(ctx, log, repo, environment, p) {
+			notified += len(p.prs)
+			dms++
+		}
+	}
+	span.SetAttributes(attribute.Int("deploy.notified", notified), attribute.Int("deploy.dms", dms))
+
+	a.record(log, repo, environment, sha)
+	log.Info("deploy.announced", "github.base_sha", prev, "deploy.commits", len(cmp.Commits), "deploy.notified", notified, "deploy.dms", dms)
+}
+
+func (a *DeployAnnouncer) record(log *slog.Logger, repo, environment, sha string) {
+	if err := a.store.SetDeployAnnouncement(repo, environment, sha); err != nil {
+		log.Error("deploy.record_failed", "err", err)
+	}
+}
+
+type pendingDM struct {
+	slackUserID string
+	prs         []*github.PullSummary
+}
+
+// pendingByUser returns the PRs in commits that each opted-in author hasn't
+// been told about, grouped by Slack user in order of first merge.
+func (a *DeployAnnouncer) pendingByUser(ctx context.Context, log *slog.Logger, repo, branch, environment string, commits []github.CommitSummary) []*pendingDM {
+	var pending []*pendingDM
+	byUser := make(map[string]*pendingDM)
 	seen := make(map[int]bool)
-	for _, commit := range cmp.Commits {
+	for _, commit := range commits {
 		pr, err := a.findPull(ctx, repo, branch, commit)
 		if err != nil {
 			log.Error("deploy.find_pull_failed", "github.commit_sha", commit.SHA, "err", err)
@@ -139,54 +168,66 @@ func (a *DeployAnnouncer) Announce(ctx context.Context, repo, branch, environmen
 			continue
 		}
 		seen[pr.Number] = true
-		if a.notify(ctx, log, repo, environment, pr) {
-			notified++
+		prLog := log.With("github.pr_number", pr.Number, "github.author", pr.Author)
+
+		slackUserID, err := a.store.GetDeployNotifySlackID(pr.Author)
+		if err != nil {
+			prLog.Error("deploy.lookup_mapping_failed", "err", err)
+			continue
+		}
+		if slackUserID == "" {
+			continue
+		}
+		done, err := a.store.DeployNotified(repo, environment, pr.Number, slackUserID)
+		if err != nil {
+			prLog.Error("deploy.lookup_notified_failed", "err", err)
+			continue
+		}
+		if done {
+			continue
+		}
+
+		p := byUser[slackUserID]
+		if p == nil {
+			p = &pendingDM{slackUserID: slackUserID}
+			byUser[slackUserID] = p
+			pending = append(pending, p)
+		}
+		p.prs = append(p.prs, pr)
+	}
+	return pending
+}
+
+// send DMs one user about all their pending PRs, then marks them notified.
+// A failed send marks none of them.
+func (a *DeployAnnouncer) send(ctx context.Context, log *slog.Logger, repo, environment string, p *pendingDM) bool {
+	_, repoName, _ := github.SplitRepo(repo)
+	prs := make([]slack.DeployedPR, len(p.prs))
+	numbers := make([]int, len(p.prs))
+	for i, pr := range p.prs {
+		prs[i] = slack.DeployedPR{
+			RepoName: repoName, Number: pr.Number, Title: pr.Title, URL: pr.URL,
+			LinearKeys: linearKeys(pr.Branch, pr.Title),
+		}
+		numbers[i] = pr.Number
+	}
+	log = log.With("slack.user_id", p.slackUserID, "github.pr_numbers", numbers)
+
+	fallback := fmt.Sprintf("%s is live in %s", p.prs[0].Title, environment)
+	if len(prs) > 1 {
+		fallback = fmt.Sprintf("%d of your pull requests are live in %s", len(prs), environment)
+	}
+	if _, err := a.slack.PostDM(ctx, p.slackUserID, slack.DeployedBlocks(environment, prs), fallback); err != nil {
+		trace.SpanFromContext(ctx).RecordError(err)
+		log.Error("deploy.send_dm_failed", "err", err)
+		return false
+	}
+	for _, n := range numbers {
+		if err := a.store.MarkDeployNotified(repo, environment, n, p.slackUserID); err != nil {
+			log.Error("deploy.mark_notified_failed", "github.pr_number", n, "err", err)
 		}
 	}
-	span.SetAttributes(attribute.Int("deploy.notified", notified))
-
-	a.record(log, repo, environment, sha)
-	log.Info("deploy.announced", "github.base_sha", prev, "deploy.commits", len(cmp.Commits), "deploy.notified", notified)
-}
-
-func (a *DeployAnnouncer) record(log *slog.Logger, repo, environment, sha string) {
-	if err := a.store.SetDeployAnnouncement(repo, environment, sha); err != nil {
-		log.Error("deploy.record_failed", "err", err)
-	}
-}
-
-// notify DMs the PR's author if they opted in and haven't been told yet.
-func (a *DeployAnnouncer) notify(ctx context.Context, log *slog.Logger, repo, environment string, pr *github.PullSummary) bool {
-	log = log.With("github.pr_number", pr.Number, "github.author", pr.Author)
-
-	slackUserID, err := a.store.GetDeployNotifySlackID(pr.Author)
-	if err != nil {
-		log.Error("deploy.lookup_mapping_failed", "err", err)
-		return false
-	}
-	if slackUserID == "" {
-		return false
-	}
-	done, err := a.store.DeployNotified(repo, environment, pr.Number, slackUserID)
-	if err != nil {
-		log.Error("deploy.lookup_notified_failed", "err", err)
-		return false
-	}
-	if done {
-		return false
-	}
-
-	_, repoName, _ := github.SplitRepo(repo)
-	blocks := slack.DeployedBlocks(repoName, pr.Number, pr.Title, pr.URL, environment, linearKeys(pr.Branch, pr.Title))
-	fallback := fmt.Sprintf("%s is live in %s", pr.Title, environment)
-	if _, err := a.slack.PostDM(ctx, slackUserID, blocks, fallback); err != nil {
-		log.Error("deploy.send_dm_failed", "slack.user_id", slackUserID, "err", err)
-		return false
-	}
-	if err := a.store.MarkDeployNotified(repo, environment, pr.Number, slackUserID); err != nil {
-		log.Error("deploy.mark_notified_failed", "err", err)
-	}
-	log.Info("deploy.notified", "slack.user_id", slackUserID)
+	log.Info("deploy.notified")
 	return true
 }
 
