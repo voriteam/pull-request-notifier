@@ -9,7 +9,7 @@ An open source Go service that delivers GitHub pull request activity as Slack DM
 - **Review requested** → DMs the reviewer with PR details (file count, diff stats). Message updates in-place when the PR merges or closes.
 - **Live activity** → Review-requested DMs update in real time with approval status and comment counts as activity happens.
 - **Review submitted** (approved / changes requested) → DMs the PR author.
-- **PR comments & @-mentions** → DMs the relevant recipients with the comment body.
+- **PR comments & @-mentions** → DMs the relevant recipients with the comment body. Comments from bots only DM the users they @-mention (so CI can reach whoever triggered a job) unless `ENABLE_BOT_COMMENTS=true`, which treats them like any other comment.
 - **Reply from Slack** → Opens a modal; submits to GitHub as a comment (threaded for inline review comments).
 - **React from Slack** → 👍 👀 🎉 quick buttons + 👎 😄 😕 ❤️ 🚀 overflow menu → posts a GitHub reaction.
 - **CI check failures** → DMs when a check run fails on a PR branch, with check name, repo, and branch.

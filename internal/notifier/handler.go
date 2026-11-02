@@ -23,13 +23,23 @@ import (
 
 var tracer = otel.Tracer("pull-request-notifier/notifier")
 
+type handlerSlack interface {
+	PostDM(ctx context.Context, userID string, blocks []slack.Block, fallbackText string) (string, error)
+	UpdateDM(ctx context.Context, userID, ts string, blocks []slack.Block, fallbackText string) error
+}
+
+type handlerGitHub interface {
+	GetPRActivity(ctx context.Context, repo string, prNumber int, includeBots bool) (*github.PRActivity, error)
+	GetUserDisplayName(ctx context.Context, login string) string
+}
+
 // Handler processes GitHub webhook events and sends Slack DMs.
 type Handler struct {
 	webhookSecret     string
 	enableBotComments bool
 	store             *db.Store
-	slack             *slack.Client
-	github            *github.Client
+	slack             handlerSlack
+	github            handlerGitHub
 	deploys           *DeployAnnouncer
 }
 
@@ -522,20 +532,22 @@ func (h *Handler) handleIssueComment(ctx context.Context, body []byte) {
 		return
 	}
 
-	// Don't notify about bot comments (unless enabled).
-	if !h.enableBotComments && isBot(evt.Comment.User) {
-		return
-	}
+	// A bot comment is not activity and does not DM the PR author unless bot
+	// comments are enabled, but the users it @-mentions are still notified:
+	// CI mentions whoever triggered a job to tell them it finished.
+	mentionsOnly := !h.enableBotComments && isBot(evt.Comment.User)
 
 	repo := evt.Repository.FullName
 
-	// Refresh all existing review-requested DMs for this PR with updated activity.
-	h.refreshPRMessages(ctx, repo, pullRequest{
-		Number:  evt.Issue.Number,
-		Title:   evt.Issue.Title,
-		HTMLURL: evt.Issue.HTMLURL,
-		User:    evt.Issue.User,
-	})
+	if !mentionsOnly {
+		// Refresh all existing review-requested DMs for this PR with updated activity.
+		h.refreshPRMessages(ctx, repo, pullRequest{
+			Number:  evt.Issue.Number,
+			Title:   evt.Issue.Title,
+			HTMLURL: evt.Issue.HTMLURL,
+			User:    evt.Issue.User,
+		})
+	}
 
 	prAuthor := evt.Issue.User.Login
 	commenter := evt.Comment.User.Login
@@ -566,7 +578,7 @@ func (h *Handler) handleIssueComment(ctx context.Context, body []byte) {
 	}
 
 	// Notify the PR author (skip self-comments).
-	if commenter != prAuthor {
+	if commenter != prAuthor && !mentionsOnly {
 		slackUserID, err := h.store.GetMappingByGitHubUsername(prAuthor)
 		if err == nil && slackUserID != "" {
 			blocks := slack.CommentBlocks(commenterName, evt.Issue.Title, evt.Comment.HTMLURL, evt.Comment.Body, commentCtx)
