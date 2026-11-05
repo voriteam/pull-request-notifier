@@ -22,20 +22,18 @@ type Handler struct {
 	baseURL           string
 	signingKey        string // used to HMAC-sign session cookies
 	enableBotComments bool
-	enableBotMentions bool
 	store             *db.Store
 	github            *github.Client
 }
 
 // NewHandler creates a new admin handler.
-func NewHandler(clientID, clientSecret, baseURL, signingKey string, enableBotComments, enableBotMentions bool, store *db.Store, githubClient *github.Client) *Handler {
+func NewHandler(clientID, clientSecret, baseURL, signingKey string, enableBotComments bool, store *db.Store, githubClient *github.Client) *Handler {
 	return &Handler{
 		clientID:          clientID,
 		clientSecret:      clientSecret,
 		baseURL:           baseURL,
 		signingKey:        signingKey,
 		enableBotComments: enableBotComments,
-		enableBotMentions: enableBotMentions,
 		store:             store,
 		github:            githubClient,
 	}
@@ -95,11 +93,10 @@ func (h *Handler) HandleLinkedAccounts(w http.ResponseWriter, r *http.Request) {
 <table>
 <tr><th>Setting</th><th>Value</th></tr>
 <tr><td>Bot comment notifications</td><td>%v</td></tr>
-<tr><td>Bot @-mention notifications</td><td>%v</td></tr>
 </table>
 <p class="meta">Signed in as %s &middot; %d linked accounts</p>
 </body>
-</html>`, h.enableBotComments, h.enableBotMentions, htmlEscape(username), len(mappings))
+</html>`, h.enableBotComments, htmlEscape(username), len(mappings))
 }
 
 // CompleteLogin is called from the shared OAuth callback when the state is "admin".

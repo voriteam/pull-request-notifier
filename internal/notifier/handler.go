@@ -37,7 +37,6 @@ type handlerGitHub interface {
 type Handler struct {
 	webhookSecret     string
 	enableBotComments bool
-	enableBotMentions bool
 	store             *db.Store
 	slack             handlerSlack
 	github            handlerGitHub
@@ -46,12 +45,11 @@ type Handler struct {
 
 // NewHandler creates a new GitHub webhook handler.
 // deploys may be nil, which ignores deployment_status events.
-func NewHandler(webhookSecret string, enableBotComments, enableBotMentions bool, store *db.Store, slackClient *slack.Client, githubClient *github.Client, deploys *DeployAnnouncer) *Handler {
+func NewHandler(webhookSecret string, enableBotComments bool, store *db.Store, slackClient *slack.Client, githubClient *github.Client, deploys *DeployAnnouncer) *Handler {
 	return &Handler{
 		deploys:           deploys,
 		webhookSecret:     webhookSecret,
 		enableBotComments: enableBotComments,
-		enableBotMentions: enableBotMentions,
 		store:             store,
 		slack:             slackClient,
 		github:            githubClient,
@@ -535,15 +533,9 @@ func (h *Handler) handleIssueComment(ctx context.Context, body []byte) {
 	}
 
 	// A bot comment is not activity and does not DM the PR author unless bot
-	// comments are enabled. With bot mentions enabled, the users it @-mentions
-	// are still notified: CI mentions whoever a finished job concerns.
-	mentionsOnly := false
-	if !h.enableBotComments && isBot(evt.Comment.User) {
-		if !h.enableBotMentions {
-			return
-		}
-		mentionsOnly = true
-	}
+	// comments are enabled, but the users it @-mentions are still notified:
+	// CI mentions whoever triggered a job to tell them it finished.
+	mentionsOnly := !h.enableBotComments && isBot(evt.Comment.User)
 
 	repo := evt.Repository.FullName
 

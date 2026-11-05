@@ -26,7 +26,7 @@ func (fakeProfiles) GetPRActivity(context.Context, string, int, bool) (*github.P
 
 func (fakeProfiles) GetUserDisplayName(_ context.Context, login string) string { return login }
 
-func newTestHandler(t *testing.T, enableBotComments, enableBotMentions bool) (*Handler, *fakeDMs) {
+func newTestHandler(t *testing.T, enableBotComments bool) (*Handler, *fakeDMs) {
 	t.Helper()
 	store, err := db.New(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -39,7 +39,7 @@ func newTestHandler(t *testing.T, enableBotComments, enableBotMentions bool) (*H
 		}
 	}
 	dms := &fakeDMs{}
-	return &Handler{enableBotComments: enableBotComments, enableBotMentions: enableBotMentions, store: store, slack: dms, github: fakeProfiles{}}, dms
+	return &Handler{enableBotComments: enableBotComments, store: store, slack: dms, github: fakeProfiles{}}, dms
 }
 
 // issueComment builds an issue_comment event on PR #7, authored by carol.
@@ -64,7 +64,7 @@ var (
 )
 
 func TestHandleIssueComment_BotMentionsAreDelivered(t *testing.T) {
-	h, dms := newTestHandler(t, false, true)
+	h, dms := newTestHandler(t, false)
 	h.handleIssueComment(context.Background(), issueComment(t, "created", bot, "@alice your cluster is ready"))
 
 	if got, want := users(dms.sent), []string{"UA"}; !reflect.DeepEqual(got, want) {
@@ -73,7 +73,7 @@ func TestHandleIssueComment_BotMentionsAreDelivered(t *testing.T) {
 }
 
 func TestHandleIssueComment_BotWithoutMentionsIsSilent(t *testing.T) {
-	h, dms := newTestHandler(t, false, true)
+	h, dms := newTestHandler(t, false)
 	h.handleIssueComment(context.Background(), issueComment(t, "created", bot, "Build finished."))
 
 	if len(dms.sent) != 0 {
@@ -81,17 +81,8 @@ func TestHandleIssueComment_BotWithoutMentionsIsSilent(t *testing.T) {
 	}
 }
 
-func TestHandleIssueComment_BotMentionsDisabledIsSilent(t *testing.T) {
-	h, dms := newTestHandler(t, false, false)
-	h.handleIssueComment(context.Background(), issueComment(t, "created", bot, "@alice your cluster is ready"))
-
-	if len(dms.sent) != 0 {
-		t.Errorf("DMs to %v, want none", users(dms.sent))
-	}
-}
-
 func TestHandleIssueComment_BotCommentsEnabledNotifiesAuthor(t *testing.T) {
-	h, dms := newTestHandler(t, true, false)
+	h, dms := newTestHandler(t, true)
 	h.handleIssueComment(context.Background(), issueComment(t, "created", bot, "@alice your cluster is ready"))
 
 	if got, want := users(dms.sent), []string{"UC", "UA"}; !reflect.DeepEqual(got, want) {
@@ -100,7 +91,7 @@ func TestHandleIssueComment_BotCommentsEnabledNotifiesAuthor(t *testing.T) {
 }
 
 func TestHandleIssueComment_HumanNotifiesAuthorAndMentions(t *testing.T) {
-	h, dms := newTestHandler(t, false, false)
+	h, dms := newTestHandler(t, false)
 	h.handleIssueComment(context.Background(), issueComment(t, "created", human, "@alice can you look?"))
 
 	if got, want := users(dms.sent), []string{"UC", "UA"}; !reflect.DeepEqual(got, want) {
