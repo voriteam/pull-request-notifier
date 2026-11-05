@@ -22,6 +22,7 @@ type Config struct {
 	SlackBotToken        string
 	SlackSigningSecret   string
 	EnableBotComments    bool
+	EnableBotMentions    bool
 
 	// Reminder scheduling.
 	ReminderEnabled      bool
@@ -49,6 +50,7 @@ func Load() *Config {
 		SlackBotToken:        mustGetEnv("SLACK_BOT_TOKEN"),
 		SlackSigningSecret:   mustGetEnv("SLACK_SIGNING_SECRET"),
 		EnableBotComments:    getBoolEnv("ENABLE_BOT_COMMENTS", false),
+		EnableBotMentions:    getBoolEnv("ENABLE_BOT_MENTIONS", false),
 		ReminderEnabled:      getBoolEnv("REMINDER_ENABLED", true),
 		ReminderHours:        getIntListEnv("REMINDER_HOURS", []int{9, 13, 15}),
 		ReminderWeekdaysOnly: getBoolEnv("REMINDER_WEEKDAYS_ONLY", true),

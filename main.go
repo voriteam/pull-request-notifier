@@ -56,11 +56,11 @@ func main() {
 		go scheduler.Start(context.Background())
 	}
 
-	adminHandler := admin.NewHandler(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.BaseURL, cfg.GitHubWebhookSecret, cfg.EnableBotComments, store, ghClient)
+	adminHandler := admin.NewHandler(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.BaseURL, cfg.GitHubWebhookSecret, cfg.EnableBotComments, cfg.EnableBotMentions, store, ghClient)
 	oauthHandler := oauth.NewHandler(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.BaseURL, store, ghClient, slackClient, adminHandler)
 	slackHandler := slack.NewHandler(cfg.SlackSigningSecret, store, ghClient, slackClient, cfg.BaseURL, cfg.GitHubClientID, cfg.GitHubClientSecret)
 	deployAnnouncer := notifier.NewDeployAnnouncer(cfg.DeployEnvironments, store, ghClient, slackClient)
-	webhookHandler := notifier.NewHandler(cfg.GitHubWebhookSecret, cfg.EnableBotComments, store, slackClient, ghClient, deployAnnouncer)
+	webhookHandler := notifier.NewHandler(cfg.GitHubWebhookSecret, cfg.EnableBotComments, cfg.EnableBotMentions, store, slackClient, ghClient, deployAnnouncer)
 
 	mux := http.NewServeMux()
 

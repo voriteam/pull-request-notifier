@@ -82,6 +82,8 @@ spec:
               value: {{ .Values.config.dbPath | quote }}
             - name: ENABLE_BOT_COMMENTS
               value: {{ .Values.config.enableBotComments | quote }}
+            - name: ENABLE_BOT_MENTIONS
+              value: {{ .Values.config.enableBotMentions | quote }}
             - name: REMINDER_ENABLED
               value: {{ .Values.config.reminderEnabled | quote }}
             - name: REMINDER_HOURS
