@@ -29,11 +29,11 @@ type Handler struct {
 	oauthBaseURL       string
 	githubClientID     string
 	githubClientSecret string
-	reviewBotLogin     string
+	trackerOpts        github.TrackerOptions
 }
 
 // NewHandler creates a new Slack interaction handler.
-func NewHandler(signingSecret string, store *db.Store, githubClient *github.Client, slackClient *Client, oauthBaseURL, githubClientID, githubClientSecret, reviewBotLogin string) *Handler {
+func NewHandler(signingSecret string, store *db.Store, githubClient *github.Client, slackClient *Client, oauthBaseURL, githubClientID, githubClientSecret string, trackerOpts github.TrackerOptions) *Handler {
 	return &Handler{
 		signingSecret:      signingSecret,
 		store:              store,
@@ -42,7 +42,7 @@ func NewHandler(signingSecret string, store *db.Store, githubClient *github.Clie
 		oauthBaseURL:       oauthBaseURL,
 		githubClientID:     githubClientID,
 		githubClientSecret: githubClientSecret,
-		reviewBotLogin:     reviewBotLogin,
+		trackerOpts:        trackerOpts,
 	}
 }
 
@@ -224,7 +224,7 @@ func (h *Handler) homeView(ctx context.Context, slackUserID string) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	tracker, org, err := h.github.ListTrackedPRs(ctx, mapping.GitHubUsername, h.reviewBotLogin)
+	tracker, org, err := h.github.ListTrackedPRs(ctx, mapping.GitHubUsername, h.trackerOpts)
 	if err != nil {
 		slog.Error("home: list tracked prs", "github", mapping.GitHubUsername, "err", err)
 	}

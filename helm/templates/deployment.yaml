@@ -84,6 +84,8 @@ spec:
               value: {{ .Values.config.enableBotComments | quote }}
             - name: REVIEW_BOT_LOGIN
               value: {{ .Values.config.reviewBotLogin | quote }}
+            - name: IGNORED_CHECKS
+              value: {{ .Values.config.ignoredChecks | quote }}
             - name: REMINDER_ENABLED
               value: {{ .Values.config.reminderEnabled | quote }}
             - name: REMINDER_HOURS

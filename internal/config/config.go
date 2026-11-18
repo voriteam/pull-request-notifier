@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -26,6 +27,10 @@ type Config struct {
 	// GitHub login of a code review bot whose verdict gates "Ready to merge"
 	// on the Home tab. Empty ignores bot reviews.
 	ReviewBotLogin string
+
+	// Checks whose names match are left out of the Home tab's CI state, for
+	// checks that wait on a person rather than a build. Nil keeps every check.
+	IgnoredChecks *regexp.Regexp
 
 	// Reminder scheduling.
 	ReminderEnabled      bool
@@ -54,6 +59,7 @@ func Load() *Config {
 		SlackSigningSecret:   mustGetEnv("SLACK_SIGNING_SECRET"),
 		EnableBotComments:    getBoolEnv("ENABLE_BOT_COMMENTS", false),
 		ReviewBotLogin:       os.Getenv("REVIEW_BOT_LOGIN"),
+		IgnoredChecks:        mustGetRegexpEnv("IGNORED_CHECKS"),
 		ReminderEnabled:      getBoolEnv("REMINDER_ENABLED", true),
 		ReminderHours:        getIntListEnv("REMINDER_HOURS", []int{9, 13, 15}),
 		ReminderWeekdaysOnly: getBoolEnv("REMINDER_WEEKDAYS_ONLY", true),
@@ -115,6 +121,22 @@ func parseJSONStringList(v string) ([]string, error) {
 	var list []string
 	err := json.Unmarshal([]byte(v), &list)
 	return list, err
+}
+
+// mustGetRegexpEnv compiles a Go regexp. Unset is nil.
+func mustGetRegexpEnv(key string) *regexp.Regexp {
+	re, err := parseRegexp(os.Getenv(key))
+	if err != nil {
+		panic(fmt.Sprintf("invalid %s: %v", key, err))
+	}
+	return re
+}
+
+func parseRegexp(v string) (*regexp.Regexp, error) {
+	if strings.TrimSpace(v) == "" {
+		return nil, nil
+	}
+	return regexp.Compile(v)
 }
 
 func mustGetEnv(key string) string {

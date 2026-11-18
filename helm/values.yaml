@@ -16,6 +16,9 @@ config:
   # GitHub login of a code review bot whose verdict gates "Ready to merge" on
   # the Home tab. Empty ignores bot reviews.
   reviewBotLogin: ""
+  # Go regexp of check names left out of the Home tab's CI state, for checks
+  # that wait on a person, e.g. "^policy-bot". Empty keeps every check.
+  ignoredChecks: ""
   # Daily reminders for PRs awaiting a user's review.
   reminderEnabled: true
   reminderHours: "9,13,15"

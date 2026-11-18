@@ -66,7 +66,10 @@ func main() {
 
 	adminHandler := admin.NewHandler(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.BaseURL, cfg.GitHubWebhookSecret, cfg.EnableBotComments, store, ghClient)
 	oauthHandler := oauth.NewHandler(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.BaseURL, store, ghClient, slackClient, adminHandler)
-	slackHandler := slack.NewHandler(cfg.SlackSigningSecret, store, ghClient, slackClient, cfg.BaseURL, cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.ReviewBotLogin)
+	slackHandler := slack.NewHandler(cfg.SlackSigningSecret, store, ghClient, slackClient, cfg.BaseURL, cfg.GitHubClientID, cfg.GitHubClientSecret, github.TrackerOptions{
+		ReviewBot:     cfg.ReviewBotLogin,
+		IgnoredChecks: cfg.IgnoredChecks,
+	})
 	deployAnnouncer := notifier.NewDeployAnnouncer(cfg.DeployEnvironments, store, ghClient, slackClient)
 	webhookHandler := notifier.NewHandler(cfg.GitHubWebhookSecret, cfg.EnableBotComments, store, slackClient, ghClient, deployAnnouncer)
 
