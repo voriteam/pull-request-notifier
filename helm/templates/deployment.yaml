@@ -25,6 +25,7 @@ spec:
         checksum/litestream: {{ include "pull-request-notifier.litestreamConfig" . | sha256sum }}
         {{- end }}
     spec:
+      terminationGracePeriodSeconds: 30
       serviceAccountName: {{ include "pull-request-notifier.serviceAccountName" . }}
       securityContext:
         fsGroup: 100

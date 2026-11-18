@@ -110,6 +110,7 @@ func (s *Store) migrate() error {
 		"ALTER TABLE user_mappings ADD COLUMN notify_comments INTEGER NOT NULL DEFAULT 1",
 		"ALTER TABLE user_mappings ADD COLUMN notify_ci_failures INTEGER NOT NULL DEFAULT 1",
 		"ALTER TABLE user_mappings ADD COLUMN notify_reminders INTEGER NOT NULL DEFAULT 1",
+		"ALTER TABLE webhook_redeliveries ADD COLUMN requests INTEGER NOT NULL DEFAULT 0",
 	} {
 		s.db.Exec(col) // Ignore "duplicate column" errors.
 	}
@@ -146,6 +147,17 @@ func (s *Store) migrate() error {
 			slack_user_id TEXT NOT NULL,
 			created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (repo, environment, pr_number, slack_user_id)
+		);
+
+		CREATE TABLE IF NOT EXISTS webhook_deliveries (
+			guid       TEXT PRIMARY KEY,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+
+		CREATE TABLE IF NOT EXISTS webhook_redeliveries (
+			guid       TEXT PRIMARY KEY,
+			requests   INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
 	return err
@@ -563,4 +575,40 @@ func (s *Store) MarkDeployNotified(repo, environment string, prNumber int, slack
 		repo, environment, prNumber, slackUserID,
 	)
 	return err
+}
+
+// --- Webhook deliveries ---
+
+// ClaimDelivery records the webhook delivery guid and reports whether this is its first arrival.
+func (s *Store) ClaimDelivery(guid string) (bool, error) {
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO webhook_deliveries (guid) VALUES (?)`, guid)
+	if err != nil {
+		return false, err
+	}
+	_, _ = s.db.Exec(`DELETE FROM webhook_deliveries WHERE created_at < datetime('now', '-3 days')`)
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// RedeliveryCount returns how many redeliveries of guid were requested.
+func (s *Store) RedeliveryCount(guid string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT requests FROM webhook_redeliveries WHERE guid = ?`, guid).Scan(&n)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return n, err
+}
+
+// RecordRedelivery counts one more redelivery request for guid.
+func (s *Store) RecordRedelivery(guid string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO webhook_redeliveries (guid, requests) VALUES (?, 1)
+		ON CONFLICT(guid) DO UPDATE SET requests = requests + 1
+	`, guid)
+	if err != nil {
+		return err
+	}
+	_, _ = s.db.Exec(`DELETE FROM webhook_redeliveries WHERE created_at < datetime('now', '-3 days')`)
+	return nil
 }

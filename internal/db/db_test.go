@@ -1,9 +1,13 @@
 package db_test
 
 import (
+	"database/sql"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/voriteam/pull-request-notifier/internal/db"
 )
@@ -287,5 +291,61 @@ func TestNotificationPrefs(t *testing.T) {
 	}
 	if _, err := store.GetNotifySlackID("octocat", "user_mappings; --"); err == nil {
 		t.Error("unknown notification: want error")
+	}
+}
+
+func TestClaimDelivery(t *testing.T) {
+	store := newTestStore(t)
+	for i, want := range []bool{true, false} {
+		got, err := store.ClaimDelivery("guid-1")
+		if err != nil {
+			t.Fatalf("claim %d: %v", i, err)
+		}
+		if got != want {
+			t.Errorf("claim %d = %v, want %v", i, got, want)
+		}
+	}
+	if got, _ := store.ClaimDelivery("guid-2"); !got {
+		t.Error("a different guid should claim")
+	}
+}
+
+func TestRedeliveryCount(t *testing.T) {
+	store := newTestStore(t)
+	for want := range 3 {
+		if n, err := store.RedeliveryCount("guid-1"); err != nil || n != want {
+			t.Fatalf("count = %d, %v, want %d", n, err, want)
+		}
+		if err := store.RecordRedelivery("guid-1"); err != nil {
+			t.Fatalf("record: %v", err)
+		}
+	}
+	if n, _ := store.RedeliveryCount("guid-2"); n != 0 {
+		t.Errorf("other guid count = %d", n)
+	}
+}
+
+func TestMigrate_AddsRedeliveryRequestsToAnExistingTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	raw, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE webhook_redeliveries (guid TEXT PRIMARY KEY, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
+		INSERT INTO webhook_redeliveries (guid) VALUES ('guid-1')`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	store, err := db.New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.RecordRedelivery("guid-1"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := store.RedeliveryCount("guid-1"); err != nil || n != 1 {
+		t.Errorf("count = %d, %v, want 1", n, err)
 	}
 }

@@ -1,0 +1,6 @@
+[
+  {"id": 6, "guid": "guid-a", "delivered_at": "2026-11-18T16:06:00Z", "redelivery": false, "status_code": 0, "event": "pull_request"},
+  {"id": 5, "guid": "guid-b", "delivered_at": "2026-11-18T16:05:30Z", "redelivery": true, "status_code": 200, "event": "check_run"},
+  {"id": 4, "guid": "guid-b", "delivered_at": "2026-11-18T16:05:00Z", "redelivery": false, "status_code": 502, "event": "check_run"},
+  {"id": 3, "guid": "guid-c", "delivered_at": "2026-11-18T16:04:00Z", "redelivery": false, "status_code": 502, "event": "issue_comment"}
+]

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -31,12 +32,15 @@ type Handler struct {
 	slack             *slack.Client
 	github            *github.Client
 	deploys           *DeployAnnouncer
+
+	process  func(ctx context.Context, event string, body []byte)
+	inflight sync.WaitGroup
 }
 
 // NewHandler creates a new GitHub webhook handler.
 // deploys may be nil, which ignores deployment_status events.
 func NewHandler(webhookSecret string, enableBotComments bool, store *db.Store, slackClient *slack.Client, githubClient *github.Client, deploys *DeployAnnouncer) *Handler {
-	return &Handler{
+	h := &Handler{
 		deploys:           deploys,
 		webhookSecret:     webhookSecret,
 		enableBotComments: enableBotComments,
@@ -44,7 +48,13 @@ func NewHandler(webhookSecret string, enableBotComments bool, store *db.Store, s
 		slack:             slackClient,
 		github:            githubClient,
 	}
+	h.process = h.dispatch
+	return h
 }
+
+// Wait blocks until every acknowledged webhook has finished processing.
+// Call it after the HTTP server has stopped accepting requests.
+func (h *Handler) Wait() { h.inflight.Wait() }
 
 // HandleWebhook handles POST /webhooks/github.
 func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
@@ -73,6 +83,18 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		"github.payload", payload,
 	)
 
+	if deliveryID != "" {
+		first, err := h.store.ClaimDelivery(deliveryID)
+		if err != nil {
+			// Processing twice is better than dropping the event.
+			slog.Error("webhook.claim_failed", "github.delivery_id", deliveryID, "err", err)
+		} else if !first {
+			slog.Info("webhook.duplicate", "github.event", event, "github.delivery_id", deliveryID)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+	}
+
 	w.WriteHeader(http.StatusOK)
 
 	spanAttrs := []attribute.KeyValue{
@@ -85,25 +107,31 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, span := tracer.Start(context.Background(), "webhook."+event, trace.WithAttributes(spanAttrs...))
 
+	h.inflight.Add(1)
 	go func() {
+		defer h.inflight.Done()
 		defer span.End()
-		switch event {
-		case "pull_request":
-			h.handlePullRequest(ctx, body)
-		case "pull_request_review":
-			h.handlePullRequestReview(ctx, body)
-		case "pull_request_review_comment":
-			h.handlePullRequestReviewComment(ctx, body)
-		case "issue_comment":
-			h.handleIssueComment(ctx, body)
-		case "check_run":
-			h.handleCheckRun(ctx, body)
-		case "deployment_status":
-			if h.deploys != nil {
-				h.deploys.HandleDeploymentStatus(ctx, body)
-			}
-		}
+		h.process(ctx, event, body)
 	}()
+}
+
+func (h *Handler) dispatch(ctx context.Context, event string, body []byte) {
+	switch event {
+	case "pull_request":
+		h.handlePullRequest(ctx, body)
+	case "pull_request_review":
+		h.handlePullRequestReview(ctx, body)
+	case "pull_request_review_comment":
+		h.handlePullRequestReviewComment(ctx, body)
+	case "issue_comment":
+		h.handleIssueComment(ctx, body)
+	case "check_run":
+		h.handleCheckRun(ctx, body)
+	case "deployment_status":
+		if h.deploys != nil {
+			h.deploys.HandleDeploymentStatus(ctx, body)
+		}
+	}
 }
 
 // flattenJSON recursively flattens a JSON map into dot-notation OTel attributes.

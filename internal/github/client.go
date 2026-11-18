@@ -685,6 +685,12 @@ func (c *Client) getInstallationOrg(token string) (string, error) {
 // --- HTTP helpers ---
 
 func (c *Client) get(ctx context.Context, token, path string, out any) error {
+	_, err := c.getPage(ctx, token, path, out)
+	return err
+}
+
+// getPage returns the path of the Link header's next page, or "" on the last page.
+func (c *Client) getPage(ctx context.Context, token, path string, out any) (string, error) {
 	ctx, span := tracer.Start(ctx, "github.GET", trace.WithAttributes(
 		attribute.String("http.method", "GET"),
 		attribute.String("github.api.path", path),
@@ -695,7 +701,7 @@ func (c *Client) get(ctx context.Context, token, path string, out any) error {
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return err
+		return "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
@@ -705,7 +711,7 @@ func (c *Client) get(ctx context.Context, token, path string, out any) error {
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return fmt.Errorf("github GET %s: %w", path, err)
+		return "", fmt.Errorf("github GET %s: %w", path, err)
 	}
 	defer resp.Body.Close()
 
@@ -714,9 +720,21 @@ func (c *Client) get(ctx context.Context, token, path string, out any) error {
 		err := fmt.Errorf("github GET %s: status %d: %s", path, resp.StatusCode, string(body))
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return err
+		return "", err
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return c.nextPagePath(resp.Header.Get("Link")), json.NewDecoder(resp.Body).Decode(out)
+}
+
+func (c *Client) nextPagePath(link string) string {
+	for _, part := range strings.Split(link, ",") {
+		target, rel, ok := strings.Cut(part, ";")
+		if !ok || strings.TrimSpace(rel) != `rel="next"` {
+			continue
+		}
+		target = strings.Trim(strings.TrimSpace(target), "<>")
+		return strings.TrimPrefix(target, c.baseURL)
+	}
+	return ""
 }
 
 func (c *Client) post(ctx context.Context, token, path string, body, out any) error {
