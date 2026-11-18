@@ -170,7 +170,7 @@ func (a *DeployAnnouncer) pendingByUser(ctx context.Context, log *slog.Logger, r
 		seen[pr.Number] = true
 		prLog := log.With("github.pr_number", pr.Number, "github.author", pr.Author)
 
-		slackUserID, err := a.store.GetDeployNotifySlackID(pr.Author)
+		slackUserID, err := a.store.GetNotifySlackID(pr.Author, db.NotifyDeploys)
 		if err != nil {
 			prLog.Error("deploy.lookup_mapping_failed", "err", err)
 			continue

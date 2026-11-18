@@ -185,6 +185,21 @@ func (c *Client) OpenModal(ctx context.Context, triggerID string, view map[strin
 	return nil
 }
 
+// PublishView sets a user's App Home view with views.publish.
+func (c *Client) PublishView(ctx context.Context, userID string, view map[string]any) error {
+	var result struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := c.post(ctx, "views.publish", map[string]any{"user_id": userID, "view": view}, &result); err != nil {
+		return err
+	}
+	if !result.OK {
+		return fmt.Errorf("views.publish: %s", result.Error)
+	}
+	return nil
+}
+
 // openConversation opens (or retrieves) a DM channel with a user.
 func (c *Client) openConversation(ctx context.Context, userID string) (string, error) {
 	payload := map[string]any{

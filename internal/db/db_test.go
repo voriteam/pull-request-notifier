@@ -245,3 +245,47 @@ func TestReminderSends(t *testing.T) {
 		}
 	}
 }
+
+func TestNotificationPrefs(t *testing.T) {
+	store := newTestStore(t)
+	if err := store.UpsertUserMapping("octocat", "U1", "", "", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	prefs, err := store.GetNotificationPrefs("U1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range db.AllNotifications {
+		if want := n != db.NotifyDeploys; prefs[n] != want {
+			t.Errorf("default %s = %v, want %v", n, prefs[n], want)
+		}
+	}
+
+	on := map[db.Notification]bool{db.NotifyReviewRequests: true, db.NotifyDeploys: true}
+	if err := store.SetNotificationPrefs("U1", on); err != nil {
+		t.Fatal(err)
+	}
+	prefs, err = store.GetNotificationPrefs("U1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range db.AllNotifications {
+		if prefs[n] != on[n] {
+			t.Errorf("after set %s = %v, want %v", n, prefs[n], on[n])
+		}
+	}
+
+	if got, _ := store.GetNotifySlackID("octocat", db.NotifyReviewRequests); got != "U1" {
+		t.Errorf("enabled notification: got %q, want U1", got)
+	}
+	if got, _ := store.GetNotifySlackID("octocat", db.NotifyComments); got != "" {
+		t.Errorf("muted notification: got %q, want empty", got)
+	}
+	if got, _ := store.GetNotifySlackID("nobody", db.NotifyReviewRequests); got != "" {
+		t.Errorf("unlinked user: got %q, want empty", got)
+	}
+	if _, err := store.GetNotifySlackID("octocat", "user_mappings; --"); err == nil {
+		t.Error("unknown notification: want error")
+	}
+}

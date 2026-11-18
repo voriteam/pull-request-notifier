@@ -13,6 +13,8 @@ An open source Go service that delivers GitHub pull request activity as Slack DM
 - **Reply from Slack** → Opens a modal; submits to GitHub as a comment (threaded for inline review comments).
 - **React from Slack** → 👍 👀 🎉 quick buttons + 👎 😄 😕 ❤️ 🚀 overflow menu → posts a GitHub reaction.
 - **CI check failures** → DMs when a check run fails on a PR branch, with check name, repo, and branch.
+- **Home tab tracker** → The PR Notifier app's Home tab lists PRs awaiting your review, PRs requested from your teams, and your own open PRs with review, CI and merge-conflict status. It refreshes each time you open it or press Refresh.
+- **Notification settings** → Checkboxes on the Home tab turn each kind of DM (review requests, reviews, comments and mentions, CI failures, reminders, deploys) on or off per user. All but deploys start on.
 - **Review reminders** → Three times a day (9AM/1PM/3PM by default, weekdays only, in each user's Slack timezone) DMs a digest of open PRs still awaiting their review.
 - **Production deploys (opt-in)** → After `/deploy-notifications on`, DMs you when a pull request you authored is running in production, with links to the Linear issues in its branch name and title.
 - **Display names** → Shows full names (fetched from GitHub profiles) instead of usernames, with a 4-hour cache.
@@ -137,6 +139,8 @@ Install the app on your organization and note the **Installation ID** (visible i
 ### 2. Slack App
 
 Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From a manifest**. Paste the contents of [`slack-app-manifest.yaml`](slack-app-manifest.yaml), replacing `YOUR_DOMAIN` with your public URL. Install the app to your workspace.
+
+The manifest enables the Home tab and subscribes to the `app_home_opened` event, which drives the PR tracker. If you're upgrading an existing app, turn on **App Home → Home Tab** and add `app_home_opened` under **Event Subscriptions → Subscribe to bot events**.
 
 The manifest includes the `users:read` scope, used to read each user's timezone for review reminders. If you're upgrading an existing app, add this scope and **reinstall** the app so the new permission takes effect.
 

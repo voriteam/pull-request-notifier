@@ -80,7 +80,33 @@ func TestDeployNotificationsCommand(t *testing.T) {
 	if err := store.UpsertUserMapping("octocat", "U1", "new-token", "", nil); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := store.GetDeployNotifySlackID("octocat"); got != "U1" {
+	if got, _ := store.GetNotifySlackID("octocat", db.NotifyDeploys); got != "U1" {
 		t.Errorf("opt-in lost on relink: got %q", got)
+	}
+}
+
+func TestSaveNotificationPrefs(t *testing.T) {
+	store, err := db.New(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	if err := store.UpsertUserMapping("octocat", "U1", "", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{store: store}
+
+	selected := []slackSelectOption{{Value: string(db.NotifyReviewRequests)}, {Value: "bogus"}}
+	if err := h.saveNotificationPrefs("U1", selected); err != nil {
+		t.Fatal(err)
+	}
+	prefs, err := store.GetNotificationPrefs("U1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range db.AllNotifications {
+		if want := n == db.NotifyReviewRequests; prefs[n] != want {
+			t.Errorf("%s = %v, want %v", n, prefs[n], want)
+		}
 	}
 }

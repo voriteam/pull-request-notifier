@@ -205,3 +205,22 @@ func TestScheduler_FallsBackToDefaultTZ(t *testing.T) {
 		t.Fatalf("expected DM using default tz, got %v", sender.sent)
 	}
 }
+
+func TestScheduler_SkipsUsersWithRemindersOff(t *testing.T) {
+	store := newTestStore(t)
+	if err := store.UpsertUserMapping("octocat", "U1", "", "", nil); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := store.SetNotificationPrefs("U1", map[db.Notification]bool{db.NotifyReviewRequests: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	sender := &fakeSender{tz: map[string]*time.Location{"U1": mustLoc(t, la)}}
+	lister := &fakeLister{prs: map[string][]github.AssignedPR{"octocat": somePRs()}}
+	s := New(store, lister, sender, []int{9}, false, time.UTC)
+
+	s.runOnce(context.Background(), time.Date(2026, 5, 27, 16, 2, 0, 0, time.UTC))
+	if len(sender.sent) != 0 {
+		t.Fatalf("expected no reminder, got %v", sender.sent)
+	}
+}

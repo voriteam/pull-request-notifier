@@ -305,13 +305,13 @@ func (h *Handler) handleReviewRequested(ctx context.Context, evt *pullRequestEve
 	}
 
 	reviewer := evt.RequestedReviewer.Login
-	slackUserID, err := h.store.GetMappingByGitHubUsername(reviewer)
+	slackUserID, err := h.store.GetNotifySlackID(reviewer, db.NotifyReviewRequests)
 	if err != nil {
 		slog.Error("lookup reviewer mapping", "github", reviewer, "err", err)
 		return
 	}
 	if slackUserID == "" {
-		slog.Debug("no slack mapping for reviewer", "github", reviewer)
+		slog.Debug("reviewer unlinked or muted review requests", "github", reviewer)
 		return
 	}
 
@@ -421,13 +421,13 @@ func (h *Handler) handlePullRequestReview(ctx context.Context, body []byte) {
 		return
 	}
 
-	slackUserID, err := h.store.GetMappingByGitHubUsername(prAuthor)
+	slackUserID, err := h.store.GetNotifySlackID(prAuthor, db.NotifyReviews)
 	if err != nil {
 		slog.Error("lookup pr author mapping", "github", prAuthor, "err", err)
 		return
 	}
 	if slackUserID == "" {
-		slog.Debug("no slack mapping for pr author", "github", prAuthor)
+		slog.Debug("pr author unlinked or muted reviews", "github", prAuthor)
 		return
 	}
 
@@ -479,7 +479,7 @@ func (h *Handler) handlePullRequestReviewComment(ctx context.Context, body []byt
 		return
 	}
 
-	slackUserID, err := h.store.GetMappingByGitHubUsername(prAuthor)
+	slackUserID, err := h.store.GetNotifySlackID(prAuthor, db.NotifyComments)
 	if err != nil || slackUserID == "" {
 		return
 	}
@@ -567,7 +567,7 @@ func (h *Handler) handleIssueComment(ctx context.Context, body []byte) {
 
 	// Notify the PR author (skip self-comments).
 	if commenter != prAuthor {
-		slackUserID, err := h.store.GetMappingByGitHubUsername(prAuthor)
+		slackUserID, err := h.store.GetNotifySlackID(prAuthor, db.NotifyComments)
 		if err == nil && slackUserID != "" {
 			blocks := slack.CommentBlocks(commenterName, evt.Issue.Title, evt.Comment.HTMLURL, evt.Comment.Body, commentCtx)
 			fallback := fmt.Sprintf("%s commented on %s", commenterName, evt.Issue.Title)
@@ -630,13 +630,13 @@ func (h *Handler) handleCheckRun(ctx context.Context, body []byte) {
 			continue
 		}
 
-		slackUserID, err := h.store.GetMappingByGitHubUsername(author)
+		slackUserID, err := h.store.GetNotifySlackID(author, db.NotifyCIFailures)
 		if err != nil {
 			prLog.Error("check_run.lookup_mapping_failed", "github.author", author, "err", err)
 			continue
 		}
 		if slackUserID == "" {
-			prLog.Warn("check_run.no_slack_mapping", "github.author", author)
+			prLog.Info("check_run.no_recipient", "reason", "author unlinked or muted CI failures", "github.author", author)
 			continue
 		}
 
@@ -668,7 +668,7 @@ func (h *Handler) notifyMentions(
 		if notified[key] {
 			continue
 		}
-		slackUserID, err := h.store.GetMappingByGitHubUsername(login)
+		slackUserID, err := h.store.GetNotifySlackID(login, db.NotifyComments)
 		if err != nil {
 			slog.Error("lookup mention mapping", "github", login, "err", err)
 			continue
