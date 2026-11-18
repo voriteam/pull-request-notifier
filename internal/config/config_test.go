@@ -24,3 +24,18 @@ func TestParseJSONStringList(t *testing.T) {
 		}
 	}
 }
+
+func TestParseRegexp(t *testing.T) {
+	for _, v := range []string{"", "  "} {
+		if re, err := parseRegexp(v); re != nil || err != nil {
+			t.Errorf("%q: got %v, %v; want nil", v, re, err)
+		}
+	}
+	re, err := parseRegexp("^policy-bot")
+	if err != nil || !re.MatchString("policy-bot: main") || re.MatchString("build") {
+		t.Errorf("valid pattern: %v, %v", re, err)
+	}
+	if _, err := parseRegexp("(policy"); err == nil {
+		t.Error("invalid pattern: want error")
+	}
+}

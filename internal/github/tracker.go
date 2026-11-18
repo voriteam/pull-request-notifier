@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -58,7 +59,13 @@ fragment pr on PullRequest {
     ... on User { login name }
     ... on Team { name }
   } } }
-  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+  commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 100) {
+    pageInfo { hasNextPage }
+    nodes {
+      ... on CheckRun { name status conclusion }
+      ... on StatusContext { context state }
+    }
+  } } } } }
 }
 fragment mine on PullRequest {
   ...pr
@@ -121,12 +128,70 @@ type gqlPR struct {
 	Commits struct {
 		Nodes []struct {
 			Commit struct {
-				StatusCheckRollup *struct {
-					State string `json:"state"`
-				} `json:"statusCheckRollup"`
+				StatusCheckRollup *gqlRollup `json:"statusCheckRollup"`
 			} `json:"commit"`
 		} `json:"nodes"`
 	} `json:"commits"`
+}
+
+type gqlRollup struct {
+	State    string `json:"state"`
+	Contexts struct {
+		PageInfo struct {
+			HasNextPage bool `json:"hasNextPage"`
+		} `json:"pageInfo"`
+		Nodes []gqlCheckContext `json:"nodes"`
+	} `json:"contexts"`
+}
+
+// gqlCheckContext is a CheckRun (Name, Status, Conclusion) or a
+// StatusContext (Context, State).
+type gqlCheckContext struct {
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+	Context    string `json:"context"`
+	State      string `json:"state"`
+}
+
+// checkState is the rollup's state with ignored checks left out. A truncated
+// context list keeps GitHub's state, since the unseen checks could change it.
+func checkState(r *gqlRollup, ignored *regexp.Regexp) string {
+	if r == nil {
+		return ""
+	}
+	if ignored == nil || r.Contexts.PageInfo.HasNextPage {
+		return r.State
+	}
+	var seen, pending bool
+	for _, c := range r.Contexts.Nodes {
+		name := c.Name
+		if c.Context != "" {
+			name = c.Context
+		}
+		if ignored.MatchString(name) {
+			continue
+		}
+		seen = true
+		switch {
+		case c.State == "FAILURE" || c.State == "ERROR":
+			return "FAILURE"
+		case c.State == "PENDING" || c.State == "EXPECTED":
+			pending = true
+		case c.State == "SUCCESS":
+		case c.Status != "COMPLETED":
+			pending = true
+		case c.Conclusion != "SUCCESS" && c.Conclusion != "NEUTRAL" && c.Conclusion != "SKIPPED":
+			return "FAILURE"
+		}
+	}
+	switch {
+	case pending:
+		return "PENDING"
+	case seen:
+		return "SUCCESS"
+	}
+	return ""
 }
 
 type gqlSearch struct {
@@ -134,7 +199,7 @@ type gqlSearch struct {
 	Nodes      []gqlPR `json:"nodes"`
 }
 
-func (p gqlPR) tracked(reviewBot string) TrackedPR {
+func (p gqlPR) tracked(opts TrackerOptions) TrackedPR {
 	t := TrackedPR{
 		Repo:           p.Repository.NameWithOwner,
 		Number:         p.Number,
@@ -162,7 +227,7 @@ func (p gqlPR) tracked(reviewBot string) TrackedPR {
 		}
 	}
 	for _, r := range p.Reviews.Nodes {
-		if reviewBot == "" || !strings.EqualFold(r.Author.Login, reviewBot) {
+		if opts.ReviewBot == "" || !strings.EqualFold(r.Author.Login, opts.ReviewBot) {
 			continue
 		}
 		if v := botVerdict(r.State, r.Body); v != "" {
@@ -170,8 +235,8 @@ func (p gqlPR) tracked(reviewBot string) TrackedPR {
 			t.BotVerdictStale = r.Commit.OID != p.HeadRefOid
 		}
 	}
-	if n := len(p.Commits.Nodes); n > 0 && p.Commits.Nodes[n-1].Commit.StatusCheckRollup != nil {
-		t.CheckState = p.Commits.Nodes[n-1].Commit.StatusCheckRollup.State
+	if n := len(p.Commits.Nodes); n > 0 {
+		t.CheckState = checkState(p.Commits.Nodes[n-1].Commit.StatusCheckRollup, opts.IgnoredChecks)
 	}
 	return t
 }
@@ -209,11 +274,16 @@ func TrackerSearches(org, username string) (direct, team, authored string) {
 		base + " author:" + username + " sort:updated-desc"
 }
 
+// TrackerOptions tunes how ListTrackedPRs reads review and CI state.
+type TrackerOptions struct {
+	ReviewBot     string         // login of a bot whose reviews set BotVerdict; "" skips it
+	IgnoredChecks *regexp.Regexp // checks left out of CheckState; nil keeps all
+}
+
 // ListTrackedPRs returns the user's open review requests and authored pull
-// requests in the installation's org, at most 25 per list. reviewBot is the
-// login of a bot whose reviews set BotVerdict; "" skips it.
-func (c *Client) ListTrackedPRs(ctx context.Context, username, reviewBot string) (*Tracker, string, error) {
-	reviewBot = strings.TrimSuffix(reviewBot, "[bot]")
+// requests in the installation's org, at most 25 per list.
+func (c *Client) ListTrackedPRs(ctx context.Context, username string, opts TrackerOptions) (*Tracker, string, error) {
+	opts.ReviewBot = strings.TrimSuffix(opts.ReviewBot, "[bot]")
 	token, err := c.GetInstallationToken()
 	if err != nil {
 		return nil, "", fmt.Errorf("get installation token: %w", err)
@@ -257,15 +327,15 @@ func (c *Client) ListTrackedPRs(ctx context.Context, username, reviewBot string)
 	isDirect := make(map[string]bool)
 	for _, p := range resp.Data.Direct.Nodes {
 		isDirect[p.URL] = true
-		t.Direct = append(t.Direct, p.tracked(reviewBot))
+		t.Direct = append(t.Direct, p.tracked(opts))
 	}
 	for _, p := range resp.Data.Any.Nodes {
 		if !isDirect[p.URL] {
-			t.Team = append(t.Team, p.tracked(reviewBot))
+			t.Team = append(t.Team, p.tracked(opts))
 		}
 	}
 	for _, p := range resp.Data.Authored.Nodes {
-		t.Authored = append(t.Authored, p.tracked(reviewBot))
+		t.Authored = append(t.Authored, p.tracked(opts))
 	}
 	return t, org, nil
 }

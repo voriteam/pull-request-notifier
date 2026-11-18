@@ -77,6 +77,7 @@ Optional review bot setting (off by default):
 | Variable | Default | Description |
 |---|---|---|
 | `REVIEW_BOT_LOGIN` | empty | GitHub login of a code review bot. Its latest review must approve the current head commit before one of your PRs shows as **Ready to merge**. A bot that only leaves comment reviews can signal its verdict with `APPROVE` or `REQUEST_CHANGES` on the review body's first line. In Helm, set `config.reviewBotLogin`. |
+| `IGNORED_CHECKS` | empty | Go regular expression of check and commit status names to leave out of the Home tab's CI state, such as `^policy-bot` for a check that waits on an approver. In Helm, set `config.ignoredChecks`. |
 
 Optional deploy notification setting (off by default):
 
@@ -123,7 +124,8 @@ Create a GitHub App at **Settings → Developer settings → GitHub Apps → New
   - Pull requests: Read & write (post comments, reactions)
   - Issues: Read-only (required for PR comment notifications)
   - Contents: Read-only
-  - Checks: Read-only (for CI failure notifications)
+  - Checks: Read-only (for CI failure notifications and the Home tab's CI state)
+  - Commit statuses: Read-only (for the Home tab's CI state)
   - Deployments: Read-only (for deploy notifications)
 - **Organization permissions**:
   - Members: Read-only (for admin dashboard access control)
