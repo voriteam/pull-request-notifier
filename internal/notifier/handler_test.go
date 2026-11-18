@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"net"
 	"net/http"
@@ -110,5 +111,43 @@ func TestShutdown_WaitsForInFlightProcessing(t *testing.T) {
 	}
 	if !finished.Load() {
 		t.Error("processing did not finish before shutdown returned")
+	}
+}
+
+// A write per webhook makes the Litestream restore at startup grow with webhook volume.
+func TestHandleWebhook_ReceivingWritesNothingToTheDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.db")
+	store, err := db.New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	h := NewHandler(testSecret, false, store, nil, nil, nil)
+	h.process = func(context.Context, string, []byte) {}
+	_, url := startServer(t, h)
+
+	// data_version changes when another connection commits.
+	observer, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { observer.Close() })
+	observer.SetMaxOpenConns(1)
+	dataVersion := func() int64 {
+		var v int64
+		if err := observer.QueryRow(`PRAGMA data_version`).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+
+	before := dataVersion()
+	postWebhook(t, url, "guid-1")
+	postWebhook(t, url, "guid-1")
+	postWebhook(t, url, "guid-2")
+	h.Wait()
+
+	if after := dataVersion(); after != before {
+		t.Errorf("receiving webhooks wrote to the database (data_version %d -> %d)", before, after)
 	}
 }
