@@ -149,10 +149,7 @@ func (s *Store) migrate() error {
 			PRIMARY KEY (repo, environment, pr_number, slack_user_id)
 		);
 
-		CREATE TABLE IF NOT EXISTS webhook_deliveries (
-			guid       TEXT PRIMARY KEY,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		);
+		DROP TABLE IF EXISTS webhook_deliveries;
 
 		CREATE TABLE IF NOT EXISTS webhook_redeliveries (
 			guid       TEXT PRIMARY KEY,
@@ -578,17 +575,6 @@ func (s *Store) MarkDeployNotified(repo, environment string, prNumber int, slack
 }
 
 // --- Webhook deliveries ---
-
-// ClaimDelivery records the webhook delivery guid and reports whether this is its first arrival.
-func (s *Store) ClaimDelivery(guid string) (bool, error) {
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO webhook_deliveries (guid) VALUES (?)`, guid)
-	if err != nil {
-		return false, err
-	}
-	_, _ = s.db.Exec(`DELETE FROM webhook_deliveries WHERE created_at < datetime('now', '-3 days')`)
-	n, err := res.RowsAffected()
-	return n == 1, err
-}
 
 // RedeliveryCount returns how many redeliveries of guid were requested.
 func (s *Store) RedeliveryCount(guid string) (int, error) {
