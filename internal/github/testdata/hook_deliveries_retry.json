@@ -1,0 +1,6 @@
+[
+  {"id": 13, "guid": "guid-fresh", "delivered_at": "2026-11-18T16:17:00Z", "redelivery": false, "status_code": 502, "event": "check_run"},
+  {"id": 12, "guid": "guid-r", "delivered_at": "2026-11-18T16:10:00Z", "redelivery": true, "status_code": 503, "event": "pull_request"},
+  {"id": 11, "guid": "guid-r", "delivered_at": "2026-11-18T16:06:00Z", "redelivery": false, "status_code": 0, "event": "pull_request"},
+  {"id": 10, "guid": "guid-max", "delivered_at": "2026-11-18T16:05:00Z", "redelivery": true, "status_code": 503, "event": "issue_comment"}
+]

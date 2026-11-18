@@ -1,9 +1,13 @@
 package db_test
 
 import (
+	"database/sql"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/voriteam/pull-request-notifier/internal/db"
 )
@@ -306,17 +310,42 @@ func TestClaimDelivery(t *testing.T) {
 	}
 }
 
-func TestRedelivered(t *testing.T) {
+func TestRedeliveryCount(t *testing.T) {
 	store := newTestStore(t)
-	if done, err := store.Redelivered("guid-1"); err != nil || done {
-		t.Fatalf("redelivered before mark = %v, %v", done, err)
-	}
-	for range 2 {
-		if err := store.MarkRedelivered("guid-1"); err != nil {
-			t.Fatalf("mark: %v", err)
+	for want := range 3 {
+		if n, err := store.RedeliveryCount("guid-1"); err != nil || n != want {
+			t.Fatalf("count = %d, %v, want %d", n, err, want)
+		}
+		if err := store.RecordRedelivery("guid-1"); err != nil {
+			t.Fatalf("record: %v", err)
 		}
 	}
-	if done, err := store.Redelivered("guid-1"); err != nil || !done {
-		t.Fatalf("redelivered after mark = %v, %v", done, err)
+	if n, _ := store.RedeliveryCount("guid-2"); n != 0 {
+		t.Errorf("other guid count = %d", n)
+	}
+}
+
+func TestMigrate_AddsRedeliveryRequestsToAnExistingTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	raw, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE webhook_redeliveries (guid TEXT PRIMARY KEY, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
+		INSERT INTO webhook_redeliveries (guid) VALUES ('guid-1')`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	store, err := db.New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.RecordRedelivery("guid-1"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := store.RedeliveryCount("guid-1"); err != nil || n != 1 {
+		t.Errorf("count = %d, %v, want 1", n, err)
 	}
 }

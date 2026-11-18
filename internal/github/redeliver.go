@@ -57,27 +57,38 @@ func (c *Client) RedeliverHook(ctx context.Context, id int64) error {
 }
 
 type redeliveryStore interface {
-	Redelivered(guid string) (bool, error)
-	MarkRedelivered(guid string) error
+	RedeliveryCount(guid string) (int, error)
+	RecordRedelivery(guid string) error
 }
+
+const maxRedeliveries = 3
 
 // Redeliverer re-requests webhooks GitHub failed to deliver, such as those sent while a deploy replaced the pod.
 type Redeliverer struct {
-	gh       *Client
-	store    redeliveryStore
-	now      func() time.Time
+	gh    *Client
+	store redeliveryStore
+	now   func() time.Time
+	// The load balancer keeps failing requests for about 20s after the app listens,
+	// so a sweep at startup would redeliver into the same outage.
+	startDelay time.Duration
+	// Also the minimum age of a GUID's newest attempt, which gives a requested redelivery time to land.
 	interval time.Duration
 }
 
 func NewRedeliverer(gh *Client, store redeliveryStore) *Redeliverer {
-	return &Redeliverer{gh: gh, store: store, now: time.Now, interval: 5 * time.Minute}
+	return &Redeliverer{gh: gh, store: store, now: time.Now, startDelay: 2 * time.Minute, interval: 5 * time.Minute}
 }
 
-// Run sweeps the last 2 hours, then the last 15 minutes every 5 minutes, until ctx is done.
+// Run waits startDelay, sweeps the last 2 hours, then the last 15 minutes every interval, until ctx is done.
 func (r *Redeliverer) Run(ctx context.Context) {
 	if r.gh.privateKey == nil {
 		slog.Info("webhook redelivery disabled: no GitHub App credentials")
 		return
+	}
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(r.startDelay):
 	}
 	r.sweep(ctx, r.now().Add(-2*time.Hour))
 	ticker := time.NewTicker(r.interval)
@@ -121,19 +132,22 @@ func (r *Redeliverer) sweep(ctx context.Context, cutoff time.Time) {
 			continue
 		}
 		failed++
-		done, err := r.store.Redelivered(guid)
+		if r.now().Sub(d.DeliveredAt) < r.interval {
+			continue
+		}
+		count, err := r.store.RedeliveryCount(guid)
 		if err != nil {
 			slog.Error("webhook redelivery: lookup failed", "github.delivery_guid", guid, "err", err)
 			continue
 		}
-		if done {
+		if count >= maxRedeliveries {
 			continue
 		}
 		if err := r.gh.RedeliverHook(ctx, d.ID); err != nil {
 			slog.Error("webhook redelivery failed", "github.delivery_guid", guid, "github.delivery_id", d.ID, "github.event", d.Event, "err", err)
 			continue
 		}
-		if err := r.store.MarkRedelivered(guid); err != nil {
+		if err := r.store.RecordRedelivery(guid); err != nil {
 			slog.Error("webhook redelivery: record failed", "github.delivery_guid", guid, "err", err)
 		}
 		redelivered++

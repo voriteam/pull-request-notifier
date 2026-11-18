@@ -110,6 +110,7 @@ func (s *Store) migrate() error {
 		"ALTER TABLE user_mappings ADD COLUMN notify_comments INTEGER NOT NULL DEFAULT 1",
 		"ALTER TABLE user_mappings ADD COLUMN notify_ci_failures INTEGER NOT NULL DEFAULT 1",
 		"ALTER TABLE user_mappings ADD COLUMN notify_reminders INTEGER NOT NULL DEFAULT 1",
+		"ALTER TABLE webhook_redeliveries ADD COLUMN requests INTEGER NOT NULL DEFAULT 0",
 	} {
 		s.db.Exec(col) // Ignore "duplicate column" errors.
 	}
@@ -155,6 +156,7 @@ func (s *Store) migrate() error {
 
 		CREATE TABLE IF NOT EXISTS webhook_redeliveries (
 			guid       TEXT PRIMARY KEY,
+			requests   INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
@@ -588,19 +590,22 @@ func (s *Store) ClaimDelivery(guid string) (bool, error) {
 	return n == 1, err
 }
 
-// Redelivered reports whether a redelivery of guid was already requested.
-func (s *Store) Redelivered(guid string) (bool, error) {
-	var one int
-	err := s.db.QueryRow(`SELECT 1 FROM webhook_redeliveries WHERE guid = ?`, guid).Scan(&one)
+// RedeliveryCount returns how many redeliveries of guid were requested.
+func (s *Store) RedeliveryCount(guid string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT requests FROM webhook_redeliveries WHERE guid = ?`, guid).Scan(&n)
 	if err == sql.ErrNoRows {
-		return false, nil
+		return 0, nil
 	}
-	return err == nil, err
+	return n, err
 }
 
-// MarkRedelivered records that a redelivery of guid was requested.
-func (s *Store) MarkRedelivered(guid string) error {
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO webhook_redeliveries (guid) VALUES (?)`, guid)
+// RecordRedelivery counts one more redelivery request for guid.
+func (s *Store) RecordRedelivery(guid string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO webhook_redeliveries (guid, requests) VALUES (?, 1)
+		ON CONFLICT(guid) DO UPDATE SET requests = requests + 1
+	`, guid)
 	if err != nil {
 		return err
 	}

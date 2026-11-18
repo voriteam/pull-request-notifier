@@ -57,10 +57,13 @@ func main() {
 	}
 	slackClient := slack.NewClient(cfg.SlackBotToken)
 
-	// Background work outlives the signal so it keeps running while in-flight webhooks drain.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+	// Redeliveries requested while the pod drains would land after it stops listening.
+	go github.NewRedeliverer(ghClient, store).Run(ctx)
+
 	bgCtx, cancelBG := context.WithCancel(context.Background())
 	defer cancelBG()
-	go github.NewRedeliverer(ghClient, store).Run(bgCtx)
 
 	if cfg.ReminderEnabled {
 		defaultTZ, err := time.LoadLocation(cfg.ReminderDefaultTZ)
@@ -103,9 +106,6 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(fmt.Sprintf(`{"status":"ok","version":"%s"}`, os.Getenv("VERSION"))))
 	})
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
-	defer stop()
 
 	srv := &http.Server{Addr: ":" + cfg.Port, Handler: mux}
 	serveErr := make(chan error, 1)

@@ -4,11 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"sync"
 	"testing"
@@ -21,7 +23,8 @@ type hookServer struct {
 	attempts []string
 }
 
-func newHookClient(t *testing.T) (*Client, *hookServer) {
+// newHookClient serves the testdata files as consecutive pages of /app/hook/deliveries.
+func newHookClient(t *testing.T, pages ...string) (*Client, *hookServer) {
 	t.Helper()
 	hs := &hookServer{}
 	var srv *httptest.Server
@@ -31,25 +34,31 @@ func newHookClient(t *testing.T) (*Client, *hookServer) {
 		}
 		hs.mu.Lock()
 		defer hs.mu.Unlock()
-		var file string
-		switch r.Method + " " + r.URL.RequestURI() {
-		case "GET /app/hook/deliveries?per_page=100":
-			w.Header().Set("Link", `<`+srv.URL+`/app/hook/deliveries?per_page=100&cursor=p2>; rel="next"`)
-			file = "hook_deliveries_page1.json"
-		case "GET /app/hook/deliveries?per_page=100&cursor=p2":
-			file = "hook_deliveries_page2.json"
-		default:
-			if r.Method == http.MethodPost {
-				hs.attempts = append(hs.attempts, r.URL.Path)
-				w.WriteHeader(http.StatusAccepted)
-				return
+		if r.Method == http.MethodPost {
+			hs.attempts = append(hs.attempts, r.URL.Path)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		page := -1
+		for i := range pages {
+			uri := "/app/hook/deliveries?per_page=100"
+			if i > 0 {
+				uri += fmt.Sprintf("&cursor=p%d", i+1)
 			}
+			if r.URL.RequestURI() == uri {
+				page = i
+			}
+		}
+		if page < 0 {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.RequestURI())
 			http.NotFound(w, r)
 			return
 		}
+		if page+1 < len(pages) {
+			w.Header().Set("Link", fmt.Sprintf(`<%s/app/hook/deliveries?per_page=100&cursor=p%d>; rel="next"`, srv.URL, page+2))
+		}
 		hs.gets = append(hs.gets, r.URL.RequestURI())
-		b, err := os.ReadFile(filepath.Join("testdata", file))
+		b, err := os.ReadFile(filepath.Join("testdata", pages[page]))
 		if err != nil {
 			t.Error(err)
 		}
@@ -79,44 +88,87 @@ func (hs *hookServer) takeAttempts() []string {
 	return got
 }
 
-type fakeRedeliveryStore map[string]bool
+type fakeRedeliveryStore map[string]int
 
-func (f fakeRedeliveryStore) Redelivered(guid string) (bool, error) { return f[guid], nil }
-func (f fakeRedeliveryStore) MarkRedelivered(guid string) error     { f[guid] = true; return nil }
+func (f fakeRedeliveryStore) RedeliveryCount(guid string) (int, error) { return f[guid], nil }
+func (f fakeRedeliveryStore) RecordRedelivery(guid string) error       { f[guid]++; return nil }
 
-func TestSweep_RedeliversOnlyUnrecordedFailures(t *testing.T) {
-	c, hs := newHookClient(t)
-	store := fakeRedeliveryStore{"guid-c": true}
+func newTestRedeliverer(c *Client, store fakeRedeliveryStore, now time.Time) *Redeliverer {
 	r := NewRedeliverer(c, store)
+	r.now = func() time.Time { return now }
+	r.startDelay = 0
+	return r
+}
+
+func TestSweep_RedeliversGUIDsWithNoSuccessfulAttempt(t *testing.T) {
+	c, hs := newHookClient(t, "hook_deliveries_page1.json", "hook_deliveries_page2.json")
+	store := fakeRedeliveryStore{}
+	r := newTestRedeliverer(c, store, time.Date(2026, 11, 18, 16, 30, 0, 0, time.UTC))
 
 	r.sweep(context.Background(), time.Date(2026, 11, 18, 15, 0, 0, 0, time.UTC))
 
-	// guid-a, guid-d and guid-e never got a 2xx. guid-b succeeded on redelivery. guid-c is already recorded.
+	// guid-b is the only GUID with a 2xx attempt.
 	want := []string{
 		"/app/hook/deliveries/1/attempts",
 		"/app/hook/deliveries/2/attempts",
+		"/app/hook/deliveries/3/attempts",
 		"/app/hook/deliveries/6/attempts",
 	}
 	if got := hs.takeAttempts(); !reflect.DeepEqual(got, want) {
 		t.Errorf("attempts %v, want %v", got, want)
 	}
-	for _, guid := range []string{"guid-a", "guid-d", "guid-e"} {
-		if !store[guid] {
-			t.Errorf("%s not recorded", guid)
-		}
+	if want := (fakeRedeliveryStore{"guid-a": 1, "guid-c": 1, "guid-d": 1, "guid-e": 1}); !reflect.DeepEqual(store, want) {
+		t.Errorf("store %v, want %v", store, want)
 	}
-	if store["guid-b"] {
-		t.Error("guid-b recorded although it was delivered")
-	}
+}
 
-	r.sweep(context.Background(), time.Date(2026, 11, 18, 15, 0, 0, 0, time.UTC))
-	if got := hs.takeAttempts(); len(got) != 0 {
-		t.Errorf("second sweep re-posted %v", got)
+func TestSweep_RetriesAFailedRedeliveryOnALaterSweep(t *testing.T) {
+	c, hs := newHookClient(t, "hook_deliveries_retry.json")
+	store := fakeRedeliveryStore{"guid-r": 1, "guid-max": maxRedeliveries}
+	r := newTestRedeliverer(c, store, time.Date(2026, 11, 18, 16, 20, 0, 0, time.UTC))
+
+	r.sweep(context.Background(), time.Date(2026, 11, 18, 16, 0, 0, 0, time.UTC))
+
+	if got := hs.takeAttempts(); !slices.Contains(got, "/app/hook/deliveries/12/attempts") {
+		t.Errorf("attempts %v, want the newest guid-r delivery redelivered", got)
+	}
+	if store["guid-r"] != 2 {
+		t.Errorf("guid-r count %d, want 2", store["guid-r"])
+	}
+}
+
+func TestSweep_StopsAfterMaxRedeliveries(t *testing.T) {
+	c, hs := newHookClient(t, "hook_deliveries_retry.json")
+	store := fakeRedeliveryStore{"guid-max": maxRedeliveries}
+	r := newTestRedeliverer(c, store, time.Date(2026, 11, 18, 16, 20, 0, 0, time.UTC))
+
+	r.sweep(context.Background(), time.Date(2026, 11, 18, 16, 0, 0, 0, time.UTC))
+
+	if got := hs.takeAttempts(); slices.Contains(got, "/app/hook/deliveries/10/attempts") {
+		t.Errorf("attempts %v, want guid-max left alone", got)
+	}
+	if store["guid-max"] != maxRedeliveries {
+		t.Errorf("guid-max count %d", store["guid-max"])
+	}
+}
+
+func TestSweep_SkipsGUIDsWhoseNewestAttemptIsRecent(t *testing.T) {
+	c, hs := newHookClient(t, "hook_deliveries_retry.json")
+	store := fakeRedeliveryStore{}
+	r := newTestRedeliverer(c, store, time.Date(2026, 11, 18, 16, 20, 0, 0, time.UTC))
+
+	r.sweep(context.Background(), time.Date(2026, 11, 18, 16, 0, 0, 0, time.UTC))
+
+	if got := hs.takeAttempts(); slices.Contains(got, "/app/hook/deliveries/13/attempts") {
+		t.Errorf("attempts %v, want guid-fresh (3 minutes old) skipped", got)
+	}
+	if _, ok := store["guid-fresh"]; ok {
+		t.Error("guid-fresh recorded")
 	}
 }
 
 func TestListHookDeliveries_StopsAtCutoff(t *testing.T) {
-	c, hs := newHookClient(t)
+	c, hs := newHookClient(t, "hook_deliveries_page1.json", "hook_deliveries_page2.json")
 
 	got, err := c.ListHookDeliveries(context.Background(), time.Date(2026, 11, 18, 16, 4, 30, 0, time.UTC))
 	if err != nil {
