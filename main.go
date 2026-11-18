@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/voriteam/pull-request-notifier/internal/admin"
@@ -54,6 +57,11 @@ func main() {
 	}
 	slackClient := slack.NewClient(cfg.SlackBotToken)
 
+	// Background work outlives the signal so it keeps running while in-flight webhooks drain.
+	bgCtx, cancelBG := context.WithCancel(context.Background())
+	defer cancelBG()
+	go github.NewRedeliverer(ghClient, store).Run(bgCtx)
+
 	if cfg.ReminderEnabled {
 		defaultTZ, err := time.LoadLocation(cfg.ReminderDefaultTZ)
 		if err != nil {
@@ -61,7 +69,7 @@ func main() {
 			defaultTZ = time.UTC
 		}
 		scheduler := reminder.New(store, ghClient, slackClient, cfg.ReminderHours, cfg.ReminderWeekdaysOnly, defaultTZ)
-		go scheduler.Start(context.Background())
+		go scheduler.Start(bgCtx)
 	}
 
 	adminHandler := admin.NewHandler(cfg.GitHubClientID, cfg.GitHubClientSecret, cfg.BaseURL, cfg.GitHubWebhookSecret, cfg.EnableBotComments, store, ghClient)
@@ -96,9 +104,31 @@ func main() {
 		w.Write([]byte(fmt.Sprintf(`{"status":"ok","version":"%s"}`, os.Getenv("VERSION"))))
 	})
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+
+	srv := &http.Server{Addr: ":" + cfg.Port, Handler: mux}
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.ListenAndServe() }()
 	slog.Info("starting server", "port", cfg.Port)
-	if err := http.ListenAndServe(":"+cfg.Port, mux); err != nil {
-		slog.Error("server exited", "err", err)
-		os.Exit(1)
+
+	select {
+	case err := <-serveErr:
+		if !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("server exited", "err", err)
+			os.Exit(1)
+		}
+	case <-ctx.Done():
 	}
+
+	slog.Info("shutting down")
+	// Leaves headroom under the pod's 30s terminationGracePeriodSeconds.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("server shutdown", "err", err)
+	}
+	webhookHandler.Wait()
+	cancelBG()
+	slog.Info("shutdown complete")
 }

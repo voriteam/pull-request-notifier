@@ -289,3 +289,34 @@ func TestNotificationPrefs(t *testing.T) {
 		t.Error("unknown notification: want error")
 	}
 }
+
+func TestClaimDelivery(t *testing.T) {
+	store := newTestStore(t)
+	for i, want := range []bool{true, false} {
+		got, err := store.ClaimDelivery("guid-1")
+		if err != nil {
+			t.Fatalf("claim %d: %v", i, err)
+		}
+		if got != want {
+			t.Errorf("claim %d = %v, want %v", i, got, want)
+		}
+	}
+	if got, _ := store.ClaimDelivery("guid-2"); !got {
+		t.Error("a different guid should claim")
+	}
+}
+
+func TestRedelivered(t *testing.T) {
+	store := newTestStore(t)
+	if done, err := store.Redelivered("guid-1"); err != nil || done {
+		t.Fatalf("redelivered before mark = %v, %v", done, err)
+	}
+	for range 2 {
+		if err := store.MarkRedelivered("guid-1"); err != nil {
+			t.Fatalf("mark: %v", err)
+		}
+	}
+	if done, err := store.Redelivered("guid-1"); err != nil || !done {
+		t.Fatalf("redelivered after mark = %v, %v", done, err)
+	}
+}
