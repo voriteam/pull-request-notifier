@@ -1,0 +1,5 @@
+[
+  {"id": 22, "guid": "guid-x", "delivered_at": "2026-11-18T16:05:30Z", "redelivery": true, "status_code": 200, "event": "check_run"},
+  {"id": 21, "guid": "guid-x", "delivered_at": "2026-11-18T16:05:00Z", "redelivery": false, "status_code": 502, "event": "check_run"},
+  {"id": 20, "guid": "guid-y", "delivered_at": "2026-11-18T16:04:00Z", "redelivery": false, "status_code": 200, "event": "pull_request"}
+]

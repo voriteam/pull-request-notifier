@@ -185,3 +185,45 @@ func TestListHookDeliveries_StopsAtCutoff(t *testing.T) {
 		t.Errorf("requests %v, want %v", hs.gets, want)
 	}
 }
+
+func runWithTimeout(t *testing.T, r *Redeliverer) {
+	t.Helper()
+	r.interval = time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	r.Run(ctx)
+	if ctx.Err() != nil {
+		t.Fatal("Run did not stop on its own")
+	}
+}
+
+func TestRun_StopsAfterACleanSweep(t *testing.T) {
+	c, hs := newHookClient(t, "hook_deliveries_clean.json")
+	r := newTestRedeliverer(c, fakeRedeliveryStore{}, time.Date(2026, 11, 18, 16, 30, 0, 0, time.UTC))
+
+	runWithTimeout(t, r)
+
+	if len(hs.gets) != 1 {
+		t.Errorf("listed %d times, want 1", len(hs.gets))
+	}
+	if got := hs.takeAttempts(); len(got) != 0 {
+		t.Errorf("attempts %v, want none", got)
+	}
+}
+
+func TestRun_KeepsSweepingUntilEveryFailureHitsTheCap(t *testing.T) {
+	c, hs := newHookClient(t, "hook_deliveries_page1.json", "hook_deliveries_page2.json")
+	store := fakeRedeliveryStore{}
+	r := newTestRedeliverer(c, store, time.Date(2026, 11, 18, 16, 30, 0, 0, time.UTC))
+
+	runWithTimeout(t, r)
+
+	if got := len(hs.takeAttempts()); got != 4*maxRedeliveries {
+		t.Errorf("%d attempts, want %d", got, 4*maxRedeliveries)
+	}
+	for _, guid := range []string{"guid-a", "guid-c", "guid-d", "guid-e"} {
+		if store[guid] != maxRedeliveries {
+			t.Errorf("%s count %d, want %d", guid, store[guid], maxRedeliveries)
+		}
+	}
+}

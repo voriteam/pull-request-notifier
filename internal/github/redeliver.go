@@ -61,7 +61,10 @@ type redeliveryStore interface {
 	RecordRedelivery(guid string) error
 }
 
-const maxRedeliveries = 3
+const (
+	maxRedeliveries = 3
+	lookback        = 2 * time.Hour
+)
 
 // Redeliverer re-requests webhooks GitHub failed to deliver, such as those sent while a deploy replaced the pod.
 type Redeliverer struct {
@@ -79,31 +82,29 @@ func NewRedeliverer(gh *Client, store redeliveryStore) *Redeliverer {
 	return &Redeliverer{gh: gh, store: store, now: time.Now, startDelay: 2 * time.Minute, interval: 5 * time.Minute}
 }
 
-// Run waits startDelay, sweeps the last 2 hours, then the last 15 minutes every interval, until ctx is done.
+// Run waits startDelay, then sweeps the last 2 hours every interval until no GUID is left to retry or ctx is done.
+// Missed deliveries come from restarts, so one run per process start covers them.
 func (r *Redeliverer) Run(ctx context.Context) {
 	if r.gh.privateKey == nil {
 		slog.Info("webhook redelivery disabled: no GitHub App credentials")
 		return
 	}
-	select {
-	case <-ctx.Done():
-		return
-	case <-time.After(r.startDelay):
-	}
-	r.sweep(ctx, r.now().Add(-2*time.Hour))
-	ticker := time.NewTicker(r.interval)
-	defer ticker.Stop()
+	wait := r.startDelay
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			r.sweep(ctx, r.now().Add(-15*time.Minute))
+		case <-time.After(wait):
 		}
+		if !r.sweep(ctx, r.now().Add(-lookback)) {
+			return
+		}
+		wait = r.interval
 	}
 }
 
-func (r *Redeliverer) sweep(ctx context.Context, cutoff time.Time) {
+// sweep reports whether a GUID may still need a redelivery on a later sweep.
+func (r *Redeliverer) sweep(ctx context.Context, cutoff time.Time) bool {
 	ctx, span := tracer.Start(ctx, "webhook.redeliver")
 	defer span.End()
 
@@ -112,7 +113,7 @@ func (r *Redeliverer) sweep(ctx context.Context, cutoff time.Time) {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		slog.Error("webhook redelivery: list deliveries failed", "err", err)
-		return
+		return true
 	}
 
 	newest := map[string]HookDelivery{}
@@ -126,18 +127,20 @@ func (r *Redeliverer) sweep(ctx context.Context, cutoff time.Time) {
 		}
 	}
 
-	failed, redelivered := 0, 0
+	failed, redelivered, pending := 0, 0, 0
 	for guid, d := range newest {
 		if succeeded[guid] {
 			continue
 		}
 		failed++
 		if r.now().Sub(d.DeliveredAt) < r.interval {
+			pending++
 			continue
 		}
 		count, err := r.store.RedeliveryCount(guid)
 		if err != nil {
 			slog.Error("webhook redelivery: lookup failed", "github.delivery_guid", guid, "err", err)
+			pending++
 			continue
 		}
 		if count >= maxRedeliveries {
@@ -145,18 +148,26 @@ func (r *Redeliverer) sweep(ctx context.Context, cutoff time.Time) {
 		}
 		if err := r.gh.RedeliverHook(ctx, d.ID); err != nil {
 			slog.Error("webhook redelivery failed", "github.delivery_guid", guid, "github.delivery_id", d.ID, "github.event", d.Event, "err", err)
+			pending++
 			continue
 		}
 		if err := r.store.RecordRedelivery(guid); err != nil {
 			slog.Error("webhook redelivery: record failed", "github.delivery_guid", guid, "err", err)
 		}
 		redelivered++
+		if count+1 < maxRedeliveries {
+			pending++
+		}
 	}
 
 	span.SetAttributes(
 		attribute.Int("redeliver.scanned", len(deliveries)),
 		attribute.Int("redeliver.failed", failed),
 		attribute.Int("redeliver.redelivered", redelivered),
+		attribute.Int("redeliver.pending", pending),
 	)
-	slog.Info("webhook redelivery sweep", "scanned", len(deliveries), "failed", failed, "redelivered", redelivered)
+	if failed > 0 {
+		slog.Info("webhook redelivery sweep", "scanned", len(deliveries), "failed", failed, "redelivered", redelivered, "pending", pending)
+	}
+	return pending > 0
 }
