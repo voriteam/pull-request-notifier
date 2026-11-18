@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -35,6 +36,7 @@ type Handler struct {
 
 	process  func(ctx context.Context, event string, body []byte)
 	inflight sync.WaitGroup
+	seen     *deliveryCache
 }
 
 // NewHandler creates a new GitHub webhook handler.
@@ -49,6 +51,7 @@ func NewHandler(webhookSecret string, enableBotComments bool, store *db.Store, s
 		github:            githubClient,
 	}
 	h.process = h.dispatch
+	h.seen = newDeliveryCache(time.Hour)
 	return h
 }
 
@@ -83,16 +86,10 @@ func (h *Handler) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 		"github.payload", payload,
 	)
 
-	if deliveryID != "" {
-		first, err := h.store.ClaimDelivery(deliveryID)
-		if err != nil {
-			// Processing twice is better than dropping the event.
-			slog.Error("webhook.claim_failed", "github.delivery_id", deliveryID, "err", err)
-		} else if !first {
-			slog.Info("webhook.duplicate", "github.event", event, "github.delivery_id", deliveryID)
-			w.WriteHeader(http.StatusOK)
-			return
-		}
+	if deliveryID != "" && !h.seen.claim(deliveryID) {
+		slog.Info("webhook.duplicate", "github.event", event, "github.delivery_id", deliveryID)
+		w.WriteHeader(http.StatusOK)
+		return
 	}
 
 	w.WriteHeader(http.StatusOK)

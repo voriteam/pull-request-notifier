@@ -294,22 +294,6 @@ func TestNotificationPrefs(t *testing.T) {
 	}
 }
 
-func TestClaimDelivery(t *testing.T) {
-	store := newTestStore(t)
-	for i, want := range []bool{true, false} {
-		got, err := store.ClaimDelivery("guid-1")
-		if err != nil {
-			t.Fatalf("claim %d: %v", i, err)
-		}
-		if got != want {
-			t.Errorf("claim %d = %v, want %v", i, got, want)
-		}
-	}
-	if got, _ := store.ClaimDelivery("guid-2"); !got {
-		t.Error("a different guid should claim")
-	}
-}
-
 func TestRedeliveryCount(t *testing.T) {
 	store := newTestStore(t)
 	for want := range 3 {
@@ -347,5 +331,33 @@ func TestMigrate_AddsRedeliveryRequestsToAnExistingTable(t *testing.T) {
 	}
 	if n, err := store.RedeliveryCount("guid-1"); err != nil || n != 1 {
 		t.Errorf("count = %d, %v, want 1", n, err)
+	}
+}
+
+func TestMigrate_DropsWebhookDeliveries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	raw, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE webhook_deliveries (guid TEXT PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	store, err := db.New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+
+	raw, err = sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	var n int
+	if err := raw.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name = 'webhook_deliveries'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("webhook_deliveries still exists (%d, %v)", n, err)
 	}
 }
