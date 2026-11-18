@@ -59,7 +59,9 @@ func HomeView(in HomeInput) map[string]any {
 		t := in.Tracker
 		blocks = append(blocks, prList("Needs your review", t.Direct, t.DirectTotal, direct, "Nothing waiting on you.", in.Now, reviewMeta)...)
 		blocks = append(blocks, prList("Requested from your teams", t.Team, t.TeamTotal, team, "No team requests.", in.Now, reviewMeta)...)
-		blocks = append(blocks, prList("Your pull requests", t.Authored, t.AuthoredTotal, authored, "You have no open pull requests.", in.Now, authoredMeta)...)
+		ready, others := splitReady(t.Authored)
+		blocks = append(blocks, prList("Ready to merge", ready, 0, authored, "Nothing ready yet.", in.Now, authoredMeta)...)
+		blocks = append(blocks, prList("Your other pull requests", others, t.AuthoredTotal-len(ready), authored, "You have no other open pull requests.", in.Now, authoredMeta)...)
 	}
 
 	blocks = append(blocks, block{"type": "divider"}, headerBlock("Notifications"), notificationPrefsBlock(in.Prefs))
@@ -107,19 +109,52 @@ func authoredMeta(pr github.TrackedPR, _ time.Time) string {
 	return fmt.Sprintf("%s#%d · +%d −%d · %s", pr.Repo, pr.Number, pr.Additions, pr.Deletions, prStatus(pr))
 }
 
+// readyToMerge ignores a missing human approval and a review bot that hasn't
+// reviewed.
+func readyToMerge(pr github.TrackedPR) bool {
+	botOK := pr.BotVerdict == "" || (pr.BotVerdict == github.VerdictApprove && !pr.BotVerdictStale)
+	return !pr.Draft && !pr.Conflicting && pr.CheckState == "SUCCESS" && pr.UnresolvedThreads == 0 &&
+		pr.ReviewDecision != "CHANGES_REQUESTED" && botOK
+}
+
+func splitReady(prs []github.TrackedPR) (ready, others []github.TrackedPR) {
+	for _, pr := range prs {
+		if readyToMerge(pr) {
+			ready = append(ready, pr)
+		} else {
+			others = append(others, pr)
+		}
+	}
+	return ready, others
+}
+
 func prStatus(pr github.TrackedPR) string {
 	var parts []string
-	switch {
-	case pr.Draft:
+	if pr.Draft {
 		parts = append(parts, "📝 Draft")
+	}
+	if pr.BotVerdict != "" {
+		bot := "🤖 Approved"
+		if pr.BotVerdict == github.VerdictRequestChanges {
+			bot = "🤖 Changes requested"
+		}
+		if pr.BotVerdictStale {
+			bot += " (older commit)"
+		}
+		parts = append(parts, bot)
+	}
+	switch {
 	case pr.ReviewDecision == "APPROVED":
 		parts = append(parts, "✅ Approved")
 	case pr.ReviewDecision == "CHANGES_REQUESTED":
 		parts = append(parts, "🔁 Changes requested")
 	case len(pr.PendingReviewers) > 0:
 		parts = append(parts, "⏳ Waiting on "+formatUserList(pr.PendingReviewers))
-	default:
-		parts = append(parts, "No reviewers requested")
+	case pr.ReviewDecision == "REVIEW_REQUIRED":
+		parts = append(parts, "👤 Needs approval")
+	}
+	if pr.UnresolvedThreads > 0 {
+		parts = append(parts, fmt.Sprintf("💬 %d unresolved", pr.UnresolvedThreads))
 	}
 	switch pr.CheckState {
 	case "SUCCESS":

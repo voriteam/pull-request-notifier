@@ -23,6 +23,10 @@ type Config struct {
 	SlackSigningSecret   string
 	EnableBotComments    bool
 
+	// GitHub login of a code review bot whose verdict gates "Ready to merge"
+	// on the Home tab. Empty ignores bot reviews.
+	ReviewBotLogin string
+
 	// Reminder scheduling.
 	ReminderEnabled      bool
 	ReminderHours        []int
@@ -49,6 +53,7 @@ func Load() *Config {
 		SlackBotToken:        mustGetEnv("SLACK_BOT_TOKEN"),
 		SlackSigningSecret:   mustGetEnv("SLACK_SIGNING_SECRET"),
 		EnableBotComments:    getBoolEnv("ENABLE_BOT_COMMENTS", false),
+		ReviewBotLogin:       os.Getenv("REVIEW_BOT_LOGIN"),
 		ReminderEnabled:      getBoolEnv("REMINDER_ENABLED", true),
 		ReminderHours:        getIntListEnv("REMINDER_HOURS", []int{9, 13, 15}),
 		ReminderWeekdaysOnly: getBoolEnv("REMINDER_WEEKDAYS_ONLY", true),

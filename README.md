@@ -13,7 +13,7 @@ An open source Go service that delivers GitHub pull request activity as Slack DM
 - **Reply from Slack** → Opens a modal; submits to GitHub as a comment (threaded for inline review comments).
 - **React from Slack** → 👍 👀 🎉 quick buttons + 👎 😄 😕 ❤️ 🚀 overflow menu → posts a GitHub reaction.
 - **CI check failures** → DMs when a check run fails on a PR branch, with check name, repo, and branch.
-- **Home tab tracker** → The PR Notifier app's Home tab lists PRs awaiting your review, PRs requested from your teams, and your own open PRs with review, CI and merge-conflict status. It refreshes each time you open it or press Refresh.
+- **Home tab tracker** → The PR Notifier app's Home tab lists PRs awaiting your review, PRs requested from your teams, and your own open PRs with review, CI, unresolved-thread and merge-conflict status. Your PRs that pass CI with no conflicts, unresolved threads or change requests appear under **Ready to merge**. It refreshes each time you open it or press Refresh.
 - **Notification settings** → Checkboxes on the Home tab turn each kind of DM (review requests, reviews, comments and mentions, CI failures, reminders, deploys) on or off per user. All but deploys start on.
 - **Review reminders** → Three times a day (9AM/1PM/3PM by default, weekdays only, in each user's Slack timezone) DMs a digest of open PRs still awaiting their review.
 - **Production deploys (opt-in)** → After `/deploy-notifications on`, DMs you when a pull request you authored is running in production, with links to the Linear issues in its branch name and title.
@@ -71,6 +71,12 @@ Optional reminder settings (all have defaults; reminders are on by default):
 Reminders read each user's timezone from Slack (`users.info`), which requires the
 `users:read` bot scope (see the Slack App setup below). Until the app is reinstalled
 with that scope, reminders fall back to `REMINDER_DEFAULT_TZ`.
+
+Optional review bot setting (off by default):
+
+| Variable | Default | Description |
+|---|---|---|
+| `REVIEW_BOT_LOGIN` | empty | GitHub login of a code review bot. Its latest review must approve the current head commit before one of your PRs shows as **Ready to merge**. A bot that only leaves comment reviews can signal its verdict with `APPROVE` or `REQUEST_CHANGES` on the review body's first line. In Helm, set `config.reviewBotLogin`. |
 
 Optional deploy notification setting (off by default):
 

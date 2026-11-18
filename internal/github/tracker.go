@@ -33,7 +33,19 @@ type TrackedPR struct {
 	ReviewDecision   string // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, or ""
 	CheckState       string // SUCCESS, FAILURE, ERROR, PENDING, EXPECTED, or ""
 	PendingReviewers []string
+
+	// Set only on authored PRs.
+	UnresolvedThreads int
+	BotVerdict        string // the review bot's latest verdict, or "" if it hasn't reviewed
+	BotVerdictStale   bool   // the verdict covers an older commit than the head
 }
+
+// Review bot verdicts. A bot that only leaves comment reviews signals its
+// verdict by putting one of these words on the review body's first line.
+const (
+	VerdictApprove        = "APPROVE"
+	VerdictRequestChanges = "REQUEST_CHANGES"
+)
 
 const trackerQuery = `
 fragment pr on PullRequest {
@@ -46,10 +58,16 @@ fragment pr on PullRequest {
   } } }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
 }
+fragment mine on PullRequest {
+  ...pr
+  headRefOid
+  reviewThreads(first: 100) { nodes { isResolved } }
+  reviews(last: 20) { nodes { author { login } state commit { oid } body } }
+}
 query($direct: String!, $any: String!, $authored: String!) {
   direct: search(type: ISSUE, query: $direct, first: 25) { issueCount nodes { ...pr } }
   any: search(type: ISSUE, query: $any, first: 25) { issueCount nodes { ...pr } }
-  authored: search(type: ISSUE, query: $authored, first: 25) { issueCount nodes { ...pr } }
+  authored: search(type: ISSUE, query: $authored, first: 25) { issueCount nodes { ...mine } }
 }`
 
 type gqlPR struct {
@@ -78,6 +96,24 @@ type gqlPR struct {
 			} `json:"requestedReviewer"`
 		} `json:"nodes"`
 	} `json:"reviewRequests"`
+	HeadRefOid    string `json:"headRefOid"`
+	ReviewThreads struct {
+		Nodes []struct {
+			IsResolved bool `json:"isResolved"`
+		} `json:"nodes"`
+	} `json:"reviewThreads"`
+	Reviews struct {
+		Nodes []struct {
+			Author struct {
+				Login string `json:"login"`
+			} `json:"author"`
+			State  string `json:"state"`
+			Commit struct {
+				OID string `json:"oid"`
+			} `json:"commit"`
+			Body string `json:"body"`
+		} `json:"nodes"`
+	} `json:"reviews"`
 	Commits struct {
 		Nodes []struct {
 			Commit struct {
@@ -94,7 +130,7 @@ type gqlSearch struct {
 	Nodes      []gqlPR `json:"nodes"`
 }
 
-func (p gqlPR) tracked() TrackedPR {
+func (p gqlPR) tracked(reviewBot string) TrackedPR {
 	t := TrackedPR{
 		Repo:           p.Repository.NameWithOwner,
 		Number:         p.Number,
@@ -114,10 +150,41 @@ func (p gqlPR) tracked() TrackedPR {
 			t.PendingReviewers = append(t.PendingReviewers, name)
 		}
 	}
+	for _, th := range p.ReviewThreads.Nodes {
+		if !th.IsResolved {
+			t.UnresolvedThreads++
+		}
+	}
+	for _, r := range p.Reviews.Nodes {
+		if reviewBot == "" || !strings.EqualFold(r.Author.Login, reviewBot) {
+			continue
+		}
+		if v := botVerdict(r.State, r.Body); v != "" {
+			t.BotVerdict = v
+			t.BotVerdictStale = r.Commit.OID != p.HeadRefOid
+		}
+	}
 	if n := len(p.Commits.Nodes); n > 0 && p.Commits.Nodes[n-1].Commit.StatusCheckRollup != nil {
 		t.CheckState = p.Commits.Nodes[n-1].Commit.StatusCheckRollup.State
 	}
 	return t
+}
+
+func botVerdict(state, body string) string {
+	switch state {
+	case "APPROVED":
+		return VerdictApprove
+	case "CHANGES_REQUESTED":
+		return VerdictRequestChanges
+	}
+	first, _, _ := strings.Cut(strings.TrimSpace(body), "\n")
+	switch {
+	case strings.Contains(first, VerdictRequestChanges):
+		return VerdictRequestChanges
+	case strings.Contains(first, VerdictApprove):
+		return VerdictApprove
+	}
+	return ""
 }
 
 func orLogin(name, login string) string {
@@ -137,8 +204,10 @@ func TrackerSearches(org, username string) (direct, team, authored string) {
 }
 
 // ListTrackedPRs returns the user's open review requests and authored pull
-// requests in the installation's org, at most 25 per list.
-func (c *Client) ListTrackedPRs(ctx context.Context, username string) (*Tracker, string, error) {
+// requests in the installation's org, at most 25 per list. reviewBot is the
+// login of a bot whose reviews set BotVerdict; "" skips it.
+func (c *Client) ListTrackedPRs(ctx context.Context, username, reviewBot string) (*Tracker, string, error) {
+	reviewBot = strings.TrimSuffix(reviewBot, "[bot]")
 	token, err := c.GetInstallationToken()
 	if err != nil {
 		return nil, "", fmt.Errorf("get installation token: %w", err)
@@ -182,15 +251,15 @@ func (c *Client) ListTrackedPRs(ctx context.Context, username string) (*Tracker,
 	isDirect := make(map[string]bool)
 	for _, p := range resp.Data.Direct.Nodes {
 		isDirect[p.URL] = true
-		t.Direct = append(t.Direct, p.tracked())
+		t.Direct = append(t.Direct, p.tracked(reviewBot))
 	}
 	for _, p := range resp.Data.Any.Nodes {
 		if !isDirect[p.URL] {
-			t.Team = append(t.Team, p.tracked())
+			t.Team = append(t.Team, p.tracked(reviewBot))
 		}
 	}
 	for _, p := range resp.Data.Authored.Nodes {
-		t.Authored = append(t.Authored, p.tracked())
+		t.Authored = append(t.Authored, p.tracked(reviewBot))
 	}
 	return t, org, nil
 }

@@ -17,7 +17,14 @@
     ]},
     "authored": {"issueCount": 40, "nodes": [
       {"number": 14, "title": "Batch deploy DMs", "url": "https://github.com/voriteam/pull-request-notifier/pull/14",
-       "mergeable": "CONFLICTING", "reviewDecision": "APPROVED",
+       "mergeable": "CONFLICTING", "reviewDecision": "APPROVED", "headRefOid": "bbb222",
+       "reviewThreads": {"nodes": [{"isResolved": true}, {"isResolved": false}]},
+       "reviews": {"nodes": [
+         {"author": {"login": "review-bot"}, "state": "COMMENTED", "commit": {"oid": "aaa111"}, "body": "🔄 REQUEST_CHANGES\n\nNeeds work."},
+         {"author": {"login": "review-bot"}, "state": "COMMENTED", "commit": {"oid": "aaa111"}, "body": "✅ APPROVE\n\nLooks good."},
+         {"author": {"login": "review-bot"}, "state": "COMMENTED", "commit": {"oid": "bbb222"}, "body": "A follow-up note with no verdict."},
+         {"author": {"login": "jdoe"}, "state": "CHANGES_REQUESTED", "commit": {"oid": "bbb222"}, "body": ""}
+       ]},
        "repository": {"nameWithOwner": "voriteam/pull-request-notifier"}, "author": {"login": "octocat"},
        "reviewRequests": {"nodes": []},
        "commits": {"nodes": [{"commit": {"statusCheckRollup": null}}]}}
