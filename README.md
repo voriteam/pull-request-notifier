@@ -124,7 +124,8 @@ Create a GitHub App at **Settings → Developer settings → GitHub Apps → New
   - Pull requests: Read & write (post comments, reactions)
   - Issues: Read-only (required for PR comment notifications)
   - Contents: Read-only
-  - Checks: Read-only (for CI failure notifications)
+  - Checks: Read-only (for CI failure notifications and the Home tab's CI state)
+  - Commit statuses: Read-only (for the Home tab's CI state)
   - Deployments: Read-only (for deploy notifications)
 - **Organization permissions**:
   - Members: Read-only (for admin dashboard access control)
