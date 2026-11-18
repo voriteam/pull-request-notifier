@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -104,6 +105,11 @@ func (s *Store) migrate() error {
 		"ALTER TABLE user_mappings ADD COLUMN refresh_token TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE user_mappings ADD COLUMN token_expires_at DATETIME",
 		"ALTER TABLE user_mappings ADD COLUMN notify_deploys INTEGER NOT NULL DEFAULT 0",
+		"ALTER TABLE user_mappings ADD COLUMN notify_review_requests INTEGER NOT NULL DEFAULT 1",
+		"ALTER TABLE user_mappings ADD COLUMN notify_reviews INTEGER NOT NULL DEFAULT 1",
+		"ALTER TABLE user_mappings ADD COLUMN notify_comments INTEGER NOT NULL DEFAULT 1",
+		"ALTER TABLE user_mappings ADD COLUMN notify_ci_failures INTEGER NOT NULL DEFAULT 1",
+		"ALTER TABLE user_mappings ADD COLUMN notify_reminders INTEGER NOT NULL DEFAULT 1",
 	} {
 		s.db.Exec(col) // Ignore "duplicate column" errors.
 	}
@@ -212,9 +218,8 @@ func (s *Store) DeleteMappingBySlackUserID(slackUserID string) error {
 }
 
 // ListAllMappings returns all user mappings (without tokens).
-// ListAllMappings returns all user mappings (without tokens).
 func (s *Store) ListAllMappings() ([]UserMappingSummary, error) {
-	rows, err := s.db.Query(`SELECT github_username, slack_user_id, created_at, updated_at, token_expires_at FROM user_mappings ORDER BY github_username COLLATE NOCASE`)
+	rows, err := s.db.Query(`SELECT github_username, slack_user_id, created_at, updated_at, token_expires_at, notify_reminders FROM user_mappings ORDER BY github_username COLLATE NOCASE`)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +229,7 @@ func (s *Store) ListAllMappings() ([]UserMappingSummary, error) {
 	for rows.Next() {
 		var m UserMappingSummary
 		var expiresAt sql.NullString
-		if err := rows.Scan(&m.GitHubUsername, &m.SlackUserID, &m.CreatedAt, &m.UpdatedAt, &expiresAt); err != nil {
+		if err := rows.Scan(&m.GitHubUsername, &m.SlackUserID, &m.CreatedAt, &m.UpdatedAt, &expiresAt, &m.NotifyReminders); err != nil {
 			return nil, err
 		}
 		m.TokenExpiresAt = expiresAt.String
@@ -235,11 +240,12 @@ func (s *Store) ListAllMappings() ([]UserMappingSummary, error) {
 
 // UserMappingSummary holds non-sensitive fields for display.
 type UserMappingSummary struct {
-	GitHubUsername string
-	SlackUserID    string
-	CreatedAt      string
-	UpdatedAt      string
-	TokenExpiresAt string
+	GitHubUsername  string
+	SlackUserID     string
+	CreatedAt       string
+	UpdatedAt       string
+	TokenExpiresAt  string
+	NotifyReminders bool
 }
 
 // --- OAuth States ---
@@ -431,18 +437,88 @@ func (s *Store) SetNotifyDeploys(slackUserID string, on bool) error {
 	return err
 }
 
-// GetDeployNotifySlackID returns the Slack user ID for a GitHub username that
-// has opted in to deploy DMs, or "" if the user is unlinked or opted out.
-func (s *Store) GetDeployNotifySlackID(githubUsername string) (string, error) {
+// Notification is a kind of DM a user can turn on or off. Its value is the
+// user_mappings column holding the setting.
+type Notification string
+
+const (
+	NotifyReviewRequests Notification = "notify_review_requests"
+	NotifyReviews        Notification = "notify_reviews"
+	NotifyComments       Notification = "notify_comments"
+	NotifyCIFailures     Notification = "notify_ci_failures"
+	NotifyReminders      Notification = "notify_reminders"
+	NotifyDeploys        Notification = "notify_deploys"
+)
+
+// AllNotifications lists every Notification in display order.
+var AllNotifications = []Notification{
+	NotifyReviewRequests, NotifyReviews, NotifyComments, NotifyCIFailures, NotifyReminders, NotifyDeploys,
+}
+
+func (n Notification) valid() bool {
+	for _, k := range AllNotifications {
+		if k == n {
+			return true
+		}
+	}
+	return false
+}
+
+// GetNotifySlackID returns the Slack user ID for a GitHub username that has
+// n turned on, or "" if the user is unlinked or has it off.
+func (s *Store) GetNotifySlackID(githubUsername string, n Notification) (string, error) {
+	if !n.valid() {
+		return "", fmt.Errorf("unknown notification %q", n)
+	}
 	var slackUserID string
 	err := s.db.QueryRow(
-		`SELECT slack_user_id FROM user_mappings WHERE github_username = ? AND notify_deploys = 1`,
+		`SELECT slack_user_id FROM user_mappings WHERE github_username = ? AND `+string(n)+` = 1`,
 		githubUsername,
 	).Scan(&slackUserID)
 	if err == sql.ErrNoRows {
 		return "", nil
 	}
 	return slackUserID, err
+}
+
+// GetNotificationPrefs returns which notifications a linked Slack user has on.
+// An unlinked user gets an empty map.
+func (s *Store) GetNotificationPrefs(slackUserID string) (map[Notification]bool, error) {
+	cols := make([]string, len(AllNotifications))
+	vals := make([]bool, len(AllNotifications))
+	dest := make([]any, len(AllNotifications))
+	for i, n := range AllNotifications {
+		cols[i] = string(n)
+		dest[i] = &vals[i]
+	}
+	err := s.db.QueryRow(
+		`SELECT `+strings.Join(cols, ", ")+` FROM user_mappings WHERE slack_user_id = ?`, slackUserID,
+	).Scan(dest...)
+	prefs := make(map[Notification]bool, len(AllNotifications))
+	if err == sql.ErrNoRows {
+		return prefs, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	for i, n := range AllNotifications {
+		prefs[n] = vals[i]
+	}
+	return prefs, nil
+}
+
+// SetNotificationPrefs turns every notification in on to true and every other
+// notification off.
+func (s *Store) SetNotificationPrefs(slackUserID string, on map[Notification]bool) error {
+	sets := make([]string, len(AllNotifications))
+	args := make([]any, 0, len(AllNotifications)+1)
+	for i, n := range AllNotifications {
+		sets[i] = string(n) + " = ?"
+		args = append(args, on[n])
+	}
+	args = append(args, slackUserID)
+	_, err := s.db.Exec(`UPDATE user_mappings SET `+strings.Join(sets, ", ")+` WHERE slack_user_id = ?`, args...)
+	return err
 }
 
 // GetDeployAnnouncement returns the last commit SHA announced for the repo's environment, or "" if none.

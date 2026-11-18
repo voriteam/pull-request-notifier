@@ -1,0 +1,216 @@
+package slack
+
+import (
+	"fmt"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/voriteam/pull-request-notifier/internal/db"
+	"github.com/voriteam/pull-request-notifier/internal/github"
+)
+
+// homeListLimit keeps a view of three full lists under Slack's 100-block cap.
+const homeListLimit = 15
+
+const (
+	actionHomeRefresh       = "home_refresh"
+	actionNotificationPrefs = "notification_prefs"
+)
+
+var notificationLabels = map[db.Notification]string{
+	db.NotifyReviewRequests: "Review requests",
+	db.NotifyReviews:        "Reviews on my pull requests",
+	db.NotifyComments:       "Comments and mentions",
+	db.NotifyCIFailures:     "CI failures on my pull requests",
+	db.NotifyReminders:      "Review reminders",
+	db.NotifyDeploys:        "My pull requests reaching production",
+}
+
+// HomeInput is everything the Home tab shows. A nil Tracker with a non-nil
+// TrackerErr renders an error line in place of the pull request lists.
+type HomeInput struct {
+	Tracker    *github.Tracker
+	TrackerErr error
+	Org        string
+	Username   string
+	Prefs      map[db.Notification]bool
+	Now        time.Time
+}
+
+// HomeView builds the App Home view for a linked user.
+func HomeView(in HomeInput) map[string]any {
+	blocks := []block{
+		{
+			"type": blockSection,
+			"text": mrkdwn(fmt.Sprintf("Updated <!date^%d^{time}|%s>", in.Now.Unix(), in.Now.UTC().Format(time.Kitchen+" MST"))),
+			"accessory": element{
+				"type":      "button",
+				"text":      plain("Refresh"),
+				"action_id": actionHomeRefresh,
+			},
+		},
+	}
+
+	if in.Tracker == nil {
+		blocks = append(blocks, sectionBlock(fmt.Sprintf("⚠️ Couldn't load your pull requests from GitHub. Try Refresh in a minute.\n_%s_", in.TrackerErr)))
+	} else {
+		direct, team, authored := github.TrackerSearches(in.Org, in.Username)
+		t := in.Tracker
+		blocks = append(blocks, prList("Needs your review", flattenStacks(groupStacks(t.Direct)), t.DirectTotal, direct, "Nothing waiting on you.", in.Now, reviewMeta)...)
+		blocks = append(blocks, prList("Requested from your teams", flattenStacks(groupStacks(t.Team)), t.TeamTotal, team, "No team requests.", in.Now, reviewMeta)...)
+		ready, others := splitReady(groupStacks(t.Authored))
+		blocks = append(blocks, prList("Ready to merge", ready, 0, authored, "Nothing ready yet.", in.Now, authoredMeta)...)
+		blocks = append(blocks, prList("Your other pull requests", others, t.AuthoredTotal-len(ready), authored, "You have no other open pull requests.", in.Now, authoredMeta)...)
+	}
+
+	blocks = append(blocks, block{"type": "divider"}, headerBlock("Notifications"), notificationPrefsBlock(in.Prefs))
+	return map[string]any{"type": "home", "blocks": blocks}
+}
+
+// LinkHomeView builds the App Home view for a user who hasn't linked GitHub.
+func LinkHomeView(oauthURL string) map[string]any {
+	return map[string]any{"type": "home", "blocks": LinkGitHubMessage(oauthURL)}
+}
+
+func headerBlock(text string) block {
+	return block{"type": "header", "text": plain(text)}
+}
+
+func prList(title string, prs []stackRow, total int, query, empty string, now time.Time, meta func(github.TrackedPR, time.Time) string) []block {
+	total = max(total, len(prs))
+	blocks := []block{{"type": "divider"}, headerBlock(fmt.Sprintf("%s (%d)", title, total))}
+	if len(prs) == 0 {
+		return append(blocks, contextBlock(empty))
+	}
+	shown := prs
+	if len(shown) > homeListLimit {
+		shown = shown[:homeListLimit]
+	}
+	for _, row := range shown {
+		blocks = append(blocks, sectionBlock(stackRowText(row, meta(row.pr, now))))
+	}
+	if more := total - len(shown); more > 0 {
+		link := "https://github.com/search?type=pullrequests&q=" + url.QueryEscape(query)
+		blocks = append(blocks, contextBlock(fmt.Sprintf("<%s|+%d more on GitHub>", link, more)))
+	}
+	return blocks
+}
+
+func reviewMeta(pr github.TrackedPR, now time.Time) string {
+	parts := []string{fmt.Sprintf("%s#%d", pr.Repo, pr.Number), pr.AuthorName, "opened " + ago(now, pr.CreatedAt), "updated " + ago(now, pr.UpdatedAt), fmt.Sprintf("+%d −%d", pr.Additions, pr.Deletions)}
+	if pr.Draft {
+		parts = append(parts, "📝 Draft")
+	}
+	return strings.Join(parts, " · ")
+}
+
+func authoredMeta(pr github.TrackedPR, _ time.Time) string {
+	return fmt.Sprintf("%s#%d · +%d −%d · %s", pr.Repo, pr.Number, pr.Additions, pr.Deletions, prStatus(pr))
+}
+
+// readyToMerge ignores a missing human approval and a review bot that hasn't
+// reviewed.
+func readyToMerge(pr github.TrackedPR) bool {
+	botOK := pr.BotVerdict == "" || (pr.BotVerdict == github.VerdictApprove && !pr.BotVerdictStale)
+	return !pr.Draft && !pr.Conflicting && pr.CheckState == "SUCCESS" && pr.UnresolvedThreads == 0 &&
+		pr.ReviewDecision != "CHANGES_REQUESTED" && botOK
+}
+
+// splitReady keeps each stack whole: it is ready only when every PR in it is.
+func splitReady(stacks [][]stackRow) (ready, others []stackRow) {
+	for _, s := range stacks {
+		allReady := true
+		for _, row := range s {
+			allReady = allReady && readyToMerge(row.pr)
+		}
+		if allReady {
+			ready = append(ready, s...)
+		} else {
+			others = append(others, s...)
+		}
+	}
+	return ready, others
+}
+
+func stackRowText(row stackRow, meta string) string {
+	title := fmt.Sprintf("*<%s|%s>*", row.pr.URL, row.pr.Title)
+	if row.depth > 0 {
+		title = strings.Repeat("\u2003", row.depth-1) + "↳ " + title
+	}
+	if row.size > 1 {
+		meta = fmt.Sprintf("⛓ Stack of %d · %s", row.size, meta)
+	}
+	return title + "\n" + strings.Repeat("\u2003", row.depth) + meta
+}
+
+func prStatus(pr github.TrackedPR) string {
+	var parts []string
+	if pr.Draft {
+		parts = append(parts, "📝 Draft")
+	}
+	if pr.BotVerdict != "" {
+		bot := "🤖 Approved"
+		if pr.BotVerdict == github.VerdictRequestChanges {
+			bot = "🤖 Changes requested"
+		}
+		if pr.BotVerdictStale {
+			bot += " (older commit)"
+		}
+		parts = append(parts, bot)
+	}
+	switch {
+	case pr.ReviewDecision == "APPROVED":
+		parts = append(parts, "✅ Approved")
+	case pr.ReviewDecision == "CHANGES_REQUESTED":
+		parts = append(parts, "🔁 Changes requested")
+	case len(pr.PendingReviewers) > 0:
+		parts = append(parts, "⏳ Waiting on "+formatUserList(pr.PendingReviewers))
+	case pr.ReviewDecision == "REVIEW_REQUIRED":
+		parts = append(parts, "👤 Needs approval")
+	}
+	if pr.UnresolvedThreads > 0 {
+		parts = append(parts, fmt.Sprintf("💬 %d unresolved", pr.UnresolvedThreads))
+	}
+	switch pr.CheckState {
+	case "SUCCESS":
+		parts = append(parts, "✅ CI passing")
+	case "FAILURE", "ERROR":
+		parts = append(parts, "❌ CI failing")
+	case "PENDING", "EXPECTED":
+		parts = append(parts, "🟡 CI running")
+	}
+	if pr.Conflicting {
+		parts = append(parts, "⚠️ Merge conflict")
+	}
+	return strings.Join(parts, " · ")
+}
+
+func ago(now, t time.Time) string {
+	d := now.Sub(t)
+	switch {
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
+}
+
+func notificationPrefsBlock(prefs map[db.Notification]bool) block {
+	var options, initial []textObj
+	for _, n := range db.AllNotifications {
+		opt := textObj{"text": plain(notificationLabels[n]), "value": string(n)}
+		options = append(options, opt)
+		if prefs[n] {
+			initial = append(initial, opt)
+		}
+	}
+	checkboxes := element{"type": "checkboxes", "action_id": actionNotificationPrefs, "options": options}
+	// Slack rejects an empty initial_options array.
+	if len(initial) > 0 {
+		checkboxes["initial_options"] = initial
+	}
+	return block{"type": blockActions, "elements": []element{checkboxes}}
+}

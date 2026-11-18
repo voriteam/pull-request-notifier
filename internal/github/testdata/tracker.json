@@ -1,0 +1,33 @@
+{
+  "data": {
+    "direct": {"issueCount": 1, "nodes": [
+      {"number": 812, "title": "Fix receiving totals", "url": "https://github.com/voriteam/backend/pull/812", "isDraft": false,
+       "createdAt": "2026-11-16T12:00:00Z", "updatedAt": "2026-11-17T09:30:00Z", "additions": 120, "deletions": 40, "mergeable": "MERGEABLE", "reviewDecision": "REVIEW_REQUIRED",
+       "repository": {"nameWithOwner": "voriteam/backend"}, "author": {"login": "jdoe", "name": "Jane Doe"},
+       "reviewRequests": {"nodes": [{"requestedReviewer": {"login": "octocat", "name": ""}}]},
+       "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "PENDING"}}}]}}
+    ]},
+    "any": {"issueCount": 2, "nodes": [
+      {"number": 812, "title": "Fix receiving totals", "url": "https://github.com/voriteam/backend/pull/812",
+       "repository": {"nameWithOwner": "voriteam/backend"}, "author": {"login": "jdoe", "name": "Jane Doe"},
+       "reviewRequests": {"nodes": []}, "commits": {"nodes": []}},
+      {"number": 77, "title": "Add coupon export", "url": "https://github.com/voriteam/composer/pull/77",
+       "createdAt": "2026-11-14T12:00:00Z", "repository": {"nameWithOwner": "voriteam/composer"}, "author": {"login": "sam"},
+       "reviewRequests": {"nodes": [{"requestedReviewer": {"name": "Frontend"}}]}, "commits": {"nodes": []}}
+    ]},
+    "authored": {"issueCount": 40, "nodes": [
+      {"number": 14, "title": "Batch deploy DMs", "url": "https://github.com/voriteam/pull-request-notifier/pull/14",
+       "mergeable": "CONFLICTING", "reviewDecision": "APPROVED", "headRefOid": "bbb222",
+       "reviewThreads": {"nodes": [{"isResolved": true}, {"isResolved": false}]},
+       "reviews": {"nodes": [
+         {"author": {"login": "review-bot"}, "state": "COMMENTED", "commit": {"oid": "aaa111"}, "body": "🔄 REQUEST_CHANGES\n\nNeeds work."},
+         {"author": {"login": "review-bot"}, "state": "COMMENTED", "commit": {"oid": "aaa111"}, "body": "✅ APPROVE\n\nLooks good."},
+         {"author": {"login": "review-bot"}, "state": "COMMENTED", "commit": {"oid": "bbb222"}, "body": "A follow-up note with no verdict."},
+         {"author": {"login": "jdoe"}, "state": "CHANGES_REQUESTED", "commit": {"oid": "bbb222"}, "body": ""}
+       ]},
+       "repository": {"nameWithOwner": "voriteam/pull-request-notifier"}, "author": {"login": "octocat"},
+       "reviewRequests": {"nodes": []},
+       "commits": {"nodes": [{"commit": {"statusCheckRollup": null}}]}}
+    ]}
+  }
+}

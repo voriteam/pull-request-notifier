@@ -13,6 +13,9 @@ config:
   port: "8080"
   dbPath: "/data/pr-notifier.db"
   enableBotComments: false
+  # GitHub login of a code review bot whose verdict gates "Ready to merge" on
+  # the Home tab. Empty ignores bot reviews.
+  reviewBotLogin: ""
   # Daily reminders for PRs awaiting a user's review.
   reminderEnabled: true
   reminderHours: "9,13,15"

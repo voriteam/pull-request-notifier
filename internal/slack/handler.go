@@ -29,10 +29,11 @@ type Handler struct {
 	oauthBaseURL       string
 	githubClientID     string
 	githubClientSecret string
+	reviewBotLogin     string
 }
 
 // NewHandler creates a new Slack interaction handler.
-func NewHandler(signingSecret string, store *db.Store, githubClient *github.Client, slackClient *Client, oauthBaseURL, githubClientID, githubClientSecret string) *Handler {
+func NewHandler(signingSecret string, store *db.Store, githubClient *github.Client, slackClient *Client, oauthBaseURL, githubClientID, githubClientSecret, reviewBotLogin string) *Handler {
 	return &Handler{
 		signingSecret:      signingSecret,
 		store:              store,
@@ -41,6 +42,7 @@ func NewHandler(signingSecret string, store *db.Store, githubClient *github.Clie
 		oauthBaseURL:       oauthBaseURL,
 		githubClientID:     githubClientID,
 		githubClientSecret: githubClientSecret,
+		reviewBotLogin:     reviewBotLogin,
 	}
 }
 
@@ -72,16 +74,22 @@ func (h *Handler) HandleCommand(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) handleLinkGitHub(w http.ResponseWriter, slackUserID string) {
-	// Generate a random state token.
+// oauthURL starts a GitHub OAuth flow that links to slackUserID.
+func (h *Handler) oauthURL(slackUserID string) (string, error) {
 	state := randomHex(16)
 	if err := h.store.SaveOAuthState(state, slackUserID); err != nil {
-		slog.Error("save oauth state", "err", err)
+		return "", fmt.Errorf("save oauth state: %w", err)
+	}
+	return fmt.Sprintf("%s/oauth/github?state=%s", h.oauthBaseURL, state), nil
+}
+
+func (h *Handler) handleLinkGitHub(w http.ResponseWriter, slackUserID string) {
+	oauthURL, err := h.oauthURL(slackUserID)
+	if err != nil {
+		slog.Error("link github", "err", err)
 		jsonResponse(w, map[string]string{"text": "Something went wrong. Please try again."})
 		return
 	}
-
-	oauthURL := fmt.Sprintf("%s/oauth/github?state=%s", h.oauthBaseURL, state)
 	blocks := LinkGitHubMessage(oauthURL)
 
 	// Respond ephemerally in Slack.
@@ -173,13 +181,70 @@ func (h *Handler) HandleEvent(w http.ResponseWriter, r *http.Request) {
 		Event struct {
 			Type string `json:"type"`
 			User string `json:"user"`
+			Tab  string `json:"tab"`
 		} `json:"event"`
 	}
 	if err := json.Unmarshal(body, &event); err != nil {
 		return
 	}
 
-	// No bot events currently handled.
+	if event.Event.Type == "app_home_opened" && event.Event.Tab == "home" {
+		go h.publishHome(event.Event.User)
+	}
+}
+
+func (h *Handler) publishHome(slackUserID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	view, err := h.homeView(ctx, slackUserID)
+	if err != nil {
+		slog.Error("home: build view", "slack_user_id", slackUserID, "err", err)
+		return
+	}
+	if err := h.slack.PublishView(ctx, slackUserID, view); err != nil {
+		slog.Error("home: publish view", "slack_user_id", slackUserID, "err", err)
+	}
+}
+
+func (h *Handler) homeView(ctx context.Context, slackUserID string) (map[string]any, error) {
+	mapping, err := h.store.GetMappingBySlackUserID(slackUserID)
+	if err != nil {
+		return nil, err
+	}
+	if mapping == nil {
+		oauthURL, err := h.oauthURL(slackUserID)
+		if err != nil {
+			return nil, err
+		}
+		return LinkHomeView(oauthURL), nil
+	}
+
+	prefs, err := h.store.GetNotificationPrefs(slackUserID)
+	if err != nil {
+		return nil, err
+	}
+	tracker, org, err := h.github.ListTrackedPRs(ctx, mapping.GitHubUsername, h.reviewBotLogin)
+	if err != nil {
+		slog.Error("home: list tracked prs", "github", mapping.GitHubUsername, "err", err)
+	}
+	return HomeView(HomeInput{
+		Tracker:    tracker,
+		TrackerErr: err,
+		Org:        org,
+		Username:   mapping.GitHubUsername,
+		Prefs:      prefs,
+		Now:        time.Now(),
+	}), nil
+}
+
+// saveNotificationPrefs stores the Home tab checkbox selection.
+func (h *Handler) saveNotificationPrefs(slackUserID string, selected []slackSelectOption) error {
+	on := make(map[db.Notification]bool, len(selected))
+	for _, opt := range selected {
+		on[db.Notification(opt.Value)] = true
+	}
+	return h.store.SetNotificationPrefs(slackUserID, on)
 }
 
 // HandleInteraction handles POST /slack/interactions (button clicks, modal submissions).
@@ -229,6 +294,15 @@ func (h *Handler) handleBlockActions(w http.ResponseWriter, payload *interaction
 
 		case action.ActionID == "react_overflow":
 			h.handleReaction(payload.User.ID, action.BlockID, action.SelectedOption.Value)
+
+		case action.ActionID == actionHomeRefresh:
+			go h.publishHome(payload.User.ID)
+
+		case action.ActionID == actionNotificationPrefs:
+			if err := h.saveNotificationPrefs(payload.User.ID, action.SelectedOptions); err != nil {
+				slog.Error("home: save notification prefs", "slack_user_id", payload.User.ID, "err", err)
+			}
+			go h.publishHome(payload.User.ID)
 
 		}
 	}
@@ -411,10 +485,11 @@ type slackUser struct {
 }
 
 type slackAction struct {
-	ActionID       string            `json:"action_id"`
-	BlockID        string            `json:"block_id"`
-	Value          string            `json:"value"`
-	SelectedOption slackSelectOption `json:"selected_option"`
+	ActionID        string              `json:"action_id"`
+	BlockID         string              `json:"block_id"`
+	Value           string              `json:"value"`
+	SelectedOption  slackSelectOption   `json:"selected_option"`
+	SelectedOptions []slackSelectOption `json:"selected_options"`
 }
 
 type slackSelectOption struct {

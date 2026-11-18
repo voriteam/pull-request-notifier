@@ -93,7 +93,9 @@ func (s *Scheduler) runOnce(ctx context.Context, now time.Time) {
 		return
 	}
 	for _, m := range mappings {
-		s.remindUser(ctx, now, m)
+		if m.NotifyReminders {
+			s.remindUser(ctx, now, m)
+		}
 	}
 }
 
