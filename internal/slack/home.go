@@ -57,9 +57,9 @@ func HomeView(in HomeInput) map[string]any {
 	} else {
 		direct, team, authored := github.TrackerSearches(in.Org, in.Username)
 		t := in.Tracker
-		blocks = append(blocks, prList("Needs your review", t.Direct, t.DirectTotal, direct, "Nothing waiting on you.", in.Now, reviewMeta)...)
-		blocks = append(blocks, prList("Requested from your teams", t.Team, t.TeamTotal, team, "No team requests.", in.Now, reviewMeta)...)
-		ready, others := splitReady(t.Authored)
+		blocks = append(blocks, prList("Needs your review", flattenStacks(groupStacks(t.Direct)), t.DirectTotal, direct, "Nothing waiting on you.", in.Now, reviewMeta)...)
+		blocks = append(blocks, prList("Requested from your teams", flattenStacks(groupStacks(t.Team)), t.TeamTotal, team, "No team requests.", in.Now, reviewMeta)...)
+		ready, others := splitReady(groupStacks(t.Authored))
 		blocks = append(blocks, prList("Ready to merge", ready, 0, authored, "Nothing ready yet.", in.Now, authoredMeta)...)
 		blocks = append(blocks, prList("Your other pull requests", others, t.AuthoredTotal-len(ready), authored, "You have no other open pull requests.", in.Now, authoredMeta)...)
 	}
@@ -77,7 +77,7 @@ func headerBlock(text string) block {
 	return block{"type": "header", "text": plain(text)}
 }
 
-func prList(title string, prs []github.TrackedPR, total int, query, empty string, now time.Time, meta func(github.TrackedPR, time.Time) string) []block {
+func prList(title string, prs []stackRow, total int, query, empty string, now time.Time, meta func(github.TrackedPR, time.Time) string) []block {
 	total = max(total, len(prs))
 	blocks := []block{{"type": "divider"}, headerBlock(fmt.Sprintf("%s (%d)", title, total))}
 	if len(prs) == 0 {
@@ -87,8 +87,8 @@ func prList(title string, prs []github.TrackedPR, total int, query, empty string
 	if len(shown) > homeListLimit {
 		shown = shown[:homeListLimit]
 	}
-	for _, pr := range shown {
-		blocks = append(blocks, sectionBlock(fmt.Sprintf("*<%s|%s>*\n%s", pr.URL, pr.Title, meta(pr, now))))
+	for _, row := range shown {
+		blocks = append(blocks, sectionBlock(stackRowText(row, meta(row.pr, now))))
 	}
 	if more := total - len(shown); more > 0 {
 		link := "https://github.com/search?type=pullrequests&q=" + url.QueryEscape(query)
@@ -117,15 +117,31 @@ func readyToMerge(pr github.TrackedPR) bool {
 		pr.ReviewDecision != "CHANGES_REQUESTED" && botOK
 }
 
-func splitReady(prs []github.TrackedPR) (ready, others []github.TrackedPR) {
-	for _, pr := range prs {
-		if readyToMerge(pr) {
-			ready = append(ready, pr)
+// splitReady keeps each stack whole: it is ready only when every PR in it is.
+func splitReady(stacks [][]stackRow) (ready, others []stackRow) {
+	for _, s := range stacks {
+		allReady := true
+		for _, row := range s {
+			allReady = allReady && readyToMerge(row.pr)
+		}
+		if allReady {
+			ready = append(ready, s...)
 		} else {
-			others = append(others, pr)
+			others = append(others, s...)
 		}
 	}
 	return ready, others
+}
+
+func stackRowText(row stackRow, meta string) string {
+	title := fmt.Sprintf("*<%s|%s>*", row.pr.URL, row.pr.Title)
+	if row.depth > 0 {
+		title = strings.Repeat("\u2003", row.depth-1) + "↳ " + title
+	}
+	if row.size > 1 {
+		meta = fmt.Sprintf("⛓ Stack of %d · %s", row.size, meta)
+	}
+	return title + "\n" + strings.Repeat("\u2003", row.depth) + meta
 }
 
 func prStatus(pr github.TrackedPR) string {

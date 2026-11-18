@@ -20,6 +20,8 @@ type Tracker struct {
 // TrackedPR is an open pull request with its review and CI state.
 type TrackedPR struct {
 	Repo             string
+	HeadRef          string // branch names, for detecting stacked PRs
+	BaseRef          string
 	Number           int
 	Title            string
 	URL              string
@@ -49,7 +51,7 @@ const (
 
 const trackerQuery = `
 fragment pr on PullRequest {
-  number title url isDraft createdAt updatedAt additions deletions mergeable reviewDecision
+  number title url headRefName baseRefName isDraft createdAt updatedAt additions deletions mergeable reviewDecision
   repository { nameWithOwner }
   author { login ... on User { name } }
   reviewRequests(first: 10) { nodes { requestedReviewer {
@@ -73,6 +75,8 @@ query($direct: String!, $any: String!, $authored: String!) {
 type gqlPR struct {
 	Number         int       `json:"number"`
 	Title          string    `json:"title"`
+	HeadRefName    string    `json:"headRefName"`
+	BaseRefName    string    `json:"baseRefName"`
 	URL            string    `json:"url"`
 	IsDraft        bool      `json:"isDraft"`
 	CreatedAt      time.Time `json:"createdAt"`
@@ -134,6 +138,8 @@ func (p gqlPR) tracked(reviewBot string) TrackedPR {
 	t := TrackedPR{
 		Repo:           p.Repository.NameWithOwner,
 		Number:         p.Number,
+		HeadRef:        p.HeadRefName,
+		BaseRef:        p.BaseRefName,
 		Title:          p.Title,
 		URL:            p.URL,
 		AuthorName:     orLogin(p.Author.Name, p.Author.Login),
