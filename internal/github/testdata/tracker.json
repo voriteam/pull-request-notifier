@@ -1,13 +1,13 @@
 {
   "data": {
-    "direct": {"nodes": [
+    "direct": {"issueCount": 1, "nodes": [
       {"number": 812, "title": "Fix receiving totals", "url": "https://github.com/voriteam/backend/pull/812", "isDraft": false,
        "createdAt": "2026-11-16T12:00:00Z", "additions": 120, "deletions": 40, "mergeable": "MERGEABLE", "reviewDecision": "REVIEW_REQUIRED",
        "repository": {"nameWithOwner": "voriteam/backend"}, "author": {"login": "jdoe", "name": "Jane Doe"},
        "reviewRequests": {"nodes": [{"requestedReviewer": {"login": "octocat", "name": ""}}]},
        "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "PENDING"}}}]}}
     ]},
-    "any": {"nodes": [
+    "any": {"issueCount": 2, "nodes": [
       {"number": 812, "title": "Fix receiving totals", "url": "https://github.com/voriteam/backend/pull/812",
        "repository": {"nameWithOwner": "voriteam/backend"}, "author": {"login": "jdoe", "name": "Jane Doe"},
        "reviewRequests": {"nodes": []}, "commits": {"nodes": []}},
@@ -15,7 +15,7 @@
        "createdAt": "2026-11-14T12:00:00Z", "repository": {"nameWithOwner": "voriteam/composer"}, "author": {"login": "sam"},
        "reviewRequests": {"nodes": [{"requestedReviewer": {"name": "Frontend"}}]}, "commits": {"nodes": []}}
     ]},
-    "authored": {"nodes": [
+    "authored": {"issueCount": 40, "nodes": [
       {"number": 14, "title": "Batch deploy DMs", "url": "https://github.com/voriteam/pull-request-notifier/pull/14",
        "mergeable": "CONFLICTING", "reviewDecision": "APPROVED",
        "repository": {"nameWithOwner": "voriteam/pull-request-notifier"}, "author": {"login": "octocat"},

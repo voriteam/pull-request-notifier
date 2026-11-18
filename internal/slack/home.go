@@ -56,9 +56,10 @@ func HomeView(in HomeInput) map[string]any {
 		blocks = append(blocks, sectionBlock(fmt.Sprintf("⚠️ Couldn't load your pull requests from GitHub. Try Refresh in a minute.\n_%s_", in.TrackerErr)))
 	} else {
 		direct, team, authored := github.TrackerSearches(in.Org, in.Username)
-		blocks = append(blocks, prList("Needs your review", in.Tracker.Direct, direct, "Nothing waiting on you.", in.Now, reviewMeta)...)
-		blocks = append(blocks, prList("Requested from your teams", in.Tracker.Team, team, "No team requests.", in.Now, reviewMeta)...)
-		blocks = append(blocks, prList("Your pull requests", in.Tracker.Authored, authored, "You have no open pull requests.", in.Now, authoredMeta)...)
+		t := in.Tracker
+		blocks = append(blocks, prList("Needs your review", t.Direct, t.DirectTotal, direct, "Nothing waiting on you.", in.Now, reviewMeta)...)
+		blocks = append(blocks, prList("Requested from your teams", t.Team, t.TeamTotal, team, "No team requests.", in.Now, reviewMeta)...)
+		blocks = append(blocks, prList("Your pull requests", t.Authored, t.AuthoredTotal, authored, "You have no open pull requests.", in.Now, authoredMeta)...)
 	}
 
 	blocks = append(blocks, block{"type": "divider"}, headerBlock("Notifications"), notificationPrefsBlock(in.Prefs))
@@ -74,8 +75,9 @@ func headerBlock(text string) block {
 	return block{"type": "header", "text": plain(text)}
 }
 
-func prList(title string, prs []github.TrackedPR, query, empty string, now time.Time, meta func(github.TrackedPR, time.Time) string) []block {
-	blocks := []block{{"type": "divider"}, headerBlock(fmt.Sprintf("%s (%d)", title, len(prs)))}
+func prList(title string, prs []github.TrackedPR, total int, query, empty string, now time.Time, meta func(github.TrackedPR, time.Time) string) []block {
+	total = max(total, len(prs))
+	blocks := []block{{"type": "divider"}, headerBlock(fmt.Sprintf("%s (%d)", title, total))}
 	if len(prs) == 0 {
 		return append(blocks, contextBlock(empty))
 	}
@@ -86,7 +88,7 @@ func prList(title string, prs []github.TrackedPR, query, empty string, now time.
 	for _, pr := range shown {
 		blocks = append(blocks, sectionBlock(fmt.Sprintf("*<%s|%s>*\n%s", pr.URL, pr.Title, meta(pr, now))))
 	}
-	if more := len(prs) - len(shown); more > 0 {
+	if more := total - len(shown); more > 0 {
 		link := "https://github.com/search?type=pullrequests&q=" + url.QueryEscape(query)
 		blocks = append(blocks, contextBlock(fmt.Sprintf("<%s|+%d more on GitHub>", link, more)))
 	}

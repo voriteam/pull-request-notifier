@@ -18,6 +18,9 @@ func TestListTrackedPRs(t *testing.T) {
 		t.Errorf("org %q", org)
 	}
 
+	if got.DirectTotal != 1 || got.TeamTotal != 1 || got.AuthoredTotal != 40 {
+		t.Errorf("totals: %d %d %d", got.DirectTotal, got.TeamTotal, got.AuthoredTotal)
+	}
 	if len(got.Direct) != 1 {
 		t.Fatalf("direct: %+v", got.Direct)
 	}

@@ -37,7 +37,7 @@ func TestHomeView(t *testing.T) {
 		many = append(many, github.TrackedPR{Repo: "o/r", Number: i, Title: fmt.Sprintf("PR %d", i), URL: "u", AuthorName: "Jane", CreatedAt: now.Add(-3 * time.Hour)})
 	}
 	view := HomeView(HomeInput{
-		Tracker:  &github.Tracker{Direct: many},
+		Tracker:  &github.Tracker{Direct: many, DirectTotal: 30},
 		Org:      "o",
 		Username: "octocat",
 		Prefs:    map[db.Notification]bool{db.NotifyReviewRequests: true},
@@ -49,7 +49,7 @@ func TestHomeView(t *testing.T) {
 	}
 	out := mustJSON(t, view)
 	for _, want := range []string{
-		"Needs your review (18)", "+3 more on GitHub", "o/r#1 · Jane · opened 3h ago",
+		"Needs your review (30)", "+15 more on GitHub", "o/r#1 · Jane · opened 3h ago",
 		"Requested from your teams (0)", "No team requests.", "You have no open pull requests.",
 	} {
 		if !strings.Contains(out, want) {

@@ -12,6 +12,9 @@ type Tracker struct {
 	Direct   []TrackedPR // the user is personally requested
 	Team     []TrackedPR // only a team the user belongs to is requested
 	Authored []TrackedPR
+
+	// Totals count every match on GitHub; the lists above hold at most 25.
+	DirectTotal, TeamTotal, AuthoredTotal int
 }
 
 // TrackedPR is an open pull request with its review and CI state.
@@ -43,9 +46,9 @@ fragment pr on PullRequest {
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
 }
 query($direct: String!, $any: String!, $authored: String!) {
-  direct: search(type: ISSUE, query: $direct, first: 25) { nodes { ...pr } }
-  any: search(type: ISSUE, query: $any, first: 25) { nodes { ...pr } }
-  authored: search(type: ISSUE, query: $authored, first: 25) { nodes { ...pr } }
+  direct: search(type: ISSUE, query: $direct, first: 25) { issueCount nodes { ...pr } }
+  any: search(type: ISSUE, query: $any, first: 25) { issueCount nodes { ...pr } }
+  authored: search(type: ISSUE, query: $authored, first: 25) { issueCount nodes { ...pr } }
 }`
 
 type gqlPR struct {
@@ -85,7 +88,8 @@ type gqlPR struct {
 }
 
 type gqlSearch struct {
-	Nodes []gqlPR `json:"nodes"`
+	IssueCount int     `json:"issueCount"`
+	Nodes      []gqlPR `json:"nodes"`
 }
 
 func (p gqlPR) tracked() TrackedPR {
@@ -167,7 +171,11 @@ func (c *Client) ListTrackedPRs(ctx context.Context, username string) (*Tracker,
 		return nil, "", fmt.Errorf("github graphql: %s", strings.Join(msgs, "; "))
 	}
 
-	t := &Tracker{}
+	t := &Tracker{
+		DirectTotal:   resp.Data.Direct.IssueCount,
+		TeamTotal:     resp.Data.Any.IssueCount - resp.Data.Direct.IssueCount,
+		AuthoredTotal: resp.Data.Authored.IssueCount,
+	}
 	isDirect := make(map[string]bool)
 	for _, p := range resp.Data.Direct.Nodes {
 		isDirect[p.URL] = true
