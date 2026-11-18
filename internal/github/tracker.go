@@ -29,6 +29,7 @@ type TrackedPR struct {
 	Draft            bool
 	Conflicting      bool
 	CreatedAt        time.Time
+	UpdatedAt        time.Time
 	ReviewDecision   string // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, or ""
 	CheckState       string // SUCCESS, FAILURE, ERROR, PENDING, EXPECTED, or ""
 	PendingReviewers []string
@@ -36,7 +37,7 @@ type TrackedPR struct {
 
 const trackerQuery = `
 fragment pr on PullRequest {
-  number title url isDraft createdAt additions deletions mergeable reviewDecision
+  number title url isDraft createdAt updatedAt additions deletions mergeable reviewDecision
   repository { nameWithOwner }
   author { login ... on User { name } }
   reviewRequests(first: 10) { nodes { requestedReviewer {
@@ -57,6 +58,7 @@ type gqlPR struct {
 	URL            string    `json:"url"`
 	IsDraft        bool      `json:"isDraft"`
 	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 	Additions      int       `json:"additions"`
 	Deletions      int       `json:"deletions"`
 	Mergeable      string    `json:"mergeable"`
@@ -104,6 +106,7 @@ func (p gqlPR) tracked() TrackedPR {
 		Draft:          p.IsDraft,
 		Conflicting:    p.Mergeable == "CONFLICTING",
 		CreatedAt:      p.CreatedAt,
+		UpdatedAt:      p.UpdatedAt,
 		ReviewDecision: p.ReviewDecision,
 	}
 	for _, rr := range p.ReviewRequests.Nodes {

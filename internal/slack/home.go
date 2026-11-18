@@ -96,7 +96,7 @@ func prList(title string, prs []github.TrackedPR, total int, query, empty string
 }
 
 func reviewMeta(pr github.TrackedPR, now time.Time) string {
-	parts := []string{fmt.Sprintf("%s#%d", pr.Repo, pr.Number), pr.AuthorName, "opened " + ago(now, pr.CreatedAt), fmt.Sprintf("+%d −%d", pr.Additions, pr.Deletions)}
+	parts := []string{fmt.Sprintf("%s#%d", pr.Repo, pr.Number), pr.AuthorName, "opened " + ago(now, pr.CreatedAt), "updated " + ago(now, pr.UpdatedAt), fmt.Sprintf("+%d −%d", pr.Additions, pr.Deletions)}
 	if pr.Draft {
 		parts = append(parts, "📝 Draft")
 	}
@@ -104,7 +104,7 @@ func reviewMeta(pr github.TrackedPR, now time.Time) string {
 }
 
 func authoredMeta(pr github.TrackedPR, _ time.Time) string {
-	return fmt.Sprintf("%s#%d · %s", pr.Repo, pr.Number, prStatus(pr))
+	return fmt.Sprintf("%s#%d · +%d −%d · %s", pr.Repo, pr.Number, pr.Additions, pr.Deletions, prStatus(pr))
 }
 
 func prStatus(pr github.TrackedPR) string {

@@ -26,7 +26,7 @@ func TestListTrackedPRs(t *testing.T) {
 	}
 	d := got.Direct[0]
 	if d.Repo != "voriteam/backend" || d.Number != 812 || d.AuthorName != "Jane Doe" || d.CheckState != "PENDING" ||
-		d.Additions != 120 || len(d.PendingReviewers) != 1 || d.PendingReviewers[0] != "octocat" {
+		d.Additions != 120 || d.UpdatedAt.IsZero() || len(d.PendingReviewers) != 1 || d.PendingReviewers[0] != "octocat" {
 		t.Errorf("direct PR: %+v", d)
 	}
 

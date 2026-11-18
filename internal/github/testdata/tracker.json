@@ -2,7 +2,7 @@
   "data": {
     "direct": {"issueCount": 1, "nodes": [
       {"number": 812, "title": "Fix receiving totals", "url": "https://github.com/voriteam/backend/pull/812", "isDraft": false,
-       "createdAt": "2026-11-16T12:00:00Z", "additions": 120, "deletions": 40, "mergeable": "MERGEABLE", "reviewDecision": "REVIEW_REQUIRED",
+       "createdAt": "2026-11-16T12:00:00Z", "updatedAt": "2026-11-17T09:30:00Z", "additions": 120, "deletions": 40, "mergeable": "MERGEABLE", "reviewDecision": "REVIEW_REQUIRED",
        "repository": {"nameWithOwner": "voriteam/backend"}, "author": {"login": "jdoe", "name": "Jane Doe"},
        "reviewRequests": {"nodes": [{"requestedReviewer": {"login": "octocat", "name": ""}}]},
        "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "PENDING"}}}]}}

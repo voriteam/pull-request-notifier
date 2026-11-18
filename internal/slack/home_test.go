@@ -30,11 +30,18 @@ func TestPRStatus(t *testing.T) {
 	}
 }
 
+func TestAuthoredMeta(t *testing.T) {
+	pr := github.TrackedPR{Repo: "o/r", Number: 7, Additions: 12, Deletions: 3, ReviewDecision: "APPROVED"}
+	if got, want := authoredMeta(pr, time.Time{}), "o/r#7 · +12 −3 · ✅ Approved"; got != want {
+		t.Errorf("authoredMeta = %q, want %q", got, want)
+	}
+}
+
 func TestHomeView(t *testing.T) {
 	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
 	var many []github.TrackedPR
 	for i := 1; i <= homeListLimit+3; i++ {
-		many = append(many, github.TrackedPR{Repo: "o/r", Number: i, Title: fmt.Sprintf("PR %d", i), URL: "u", AuthorName: "Jane", CreatedAt: now.Add(-3 * time.Hour)})
+		many = append(many, github.TrackedPR{Repo: "o/r", Number: i, Title: fmt.Sprintf("PR %d", i), URL: "u", AuthorName: "Jane", CreatedAt: now.Add(-3 * time.Hour), UpdatedAt: now.Add(-20 * time.Minute)})
 	}
 	view := HomeView(HomeInput{
 		Tracker:  &github.Tracker{Direct: many, DirectTotal: 30},
@@ -49,7 +56,7 @@ func TestHomeView(t *testing.T) {
 	}
 	out := mustJSON(t, view)
 	for _, want := range []string{
-		"Needs your review (30)", "+15 more on GitHub", "o/r#1 · Jane · opened 3h ago",
+		"Needs your review (30)", "+15 more on GitHub", "o/r#1 · Jane · opened 3h ago · updated 20m ago · +0 −0",
 		"Requested from your teams (0)", "No team requests.", "You have no open pull requests.",
 	} {
 		if !strings.Contains(out, want) {
