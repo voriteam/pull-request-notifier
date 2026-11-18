@@ -20,6 +20,14 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "sample-dm" {
+		if err := runSampleDM(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "sample-dm:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	slog.Info("starting", "version", os.Getenv("VERSION"))
 

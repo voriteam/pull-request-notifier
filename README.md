@@ -175,6 +175,18 @@ CGO_ENABLED=1 go build .
 
 Requires `gcc` for SQLite (CGO). On macOS: `xcode-select --install`. On Ubuntu/Debian: `apt install gcc`.
 
+## Debugging Slack delivery
+
+`sample-dm` posts a notification DM in the same format the webhook handlers use, so you can check whether a message arrives and notifies without waiting for a real event. It reads `SLACK_BOT_TOKEN`, and with `--github` it resolves the Slack user through the linked accounts in `DB_PATH`. Run it inside the running container to reuse both:
+
+```bash
+kubectl exec deploy/pr-notifier -- ./pull-request-notifier sample-dm check-failed \
+  --github octocat --repo backend --branch my-branch --check tests \
+  --url https://github.com/org/backend/pull/1/checks
+```
+
+Run it with no arguments to list the kinds and flags.
+
 ## Data & backups
 
 All state lives in a single SQLite file. The data is low-stakes (only account mappings and message timestamps for in-place edits — no message content). For production, either mount the `/data` volume on persistent storage or let the chart replicate the file with [Litestream](https://litestream.io).
